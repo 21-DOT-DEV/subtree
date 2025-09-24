@@ -1,8 +1,8 @@
 
-# Implementation Plan: [FEATURE]
+# Implementation Plan: Subtree CLI — git subtree manager
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Branch**: `001-i-am-building` | **Date**: 2025-09-22 | **Spec**: /Users/csjones/Developer/subtree/specs/001-i-am-building/spec.md
+**Input**: Feature specification from /Users/csjones/Developer/subtree/specs/001-i-am-building/spec.md
 
 ## Execution Flow (/plan command scope)
 ```
@@ -31,23 +31,30 @@
 - Phase 3-4: Implementation execution (manual or via tools)
 
 ## Summary
-[Extract from feature spec: primary requirement + technical approach from research]
+Build a Swift + SPM CLI named `subtree` to simplify managing `git subtree` operations with a declarative `subtree.yaml` at the repository root. The CLI provides `init`, `add`, `update`, `remove`, `extract`, and `validate` commands, prints a short description and top‑level commands with no arguments, emits human‑readable output to STDOUT, and uses explicit exit codes with diagnostics to STDERR. Implementation will use `swift-argument-parser`, `Yams` for YAML, and `swift-subprocess` for robust `git` execution. Outside a Git repo returns exit 3; the tool resolves upward to the repo root when run from subdirectories. For `init`, we support non‑interactive minimal config (may import when safe), an explicit non‑interactive `--import` scan, and a TTY‑only `--interactive` guided setup. `extract` supports files/dirs/globs and records mappings under each subtree; `validate` is offline by default against a commit hash with optional `--repair` and `--with-remote`.
 
 ## Technical Context
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [single/web/mobile - determines source structure]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+**Language/Version**: Swift (SPM), toolchain 6.x  
+**Primary Dependencies**: swift-argument-parser; Yams; swift-subprocess  
+**Storage**: N/A  
+**Testing**: swift-testing (TDD; unit + integration via subprocess)  
+**Target Platform**: macOS (arm64, x86_64); Linux glibc (x86_64, arm64); Windows (arm64, x86_64)  
+**Project Type**: single (CLI)  
+**Performance Goals**: Typical command latency < 1s on small repos; graceful progress on large histories  
+**Constraints**: Deterministic exit codes; non-interactive by default; upward repo root resolution; no network calls beyond `git`; dereference symlinks by default on copy; overwrite untracked by default, block modified/tracked unless `--force`; declared vs ad‑hoc copy modes are mutually exclusive  
+**Scale/Scope**: Single executable `subtree`; v1 scope includes init/add/update/remove and new extract/validate flows
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Gates derived from `.specify/memory/constitution.md` (v1.0.0):
+- CLI I/O Contract: STDOUT for normal output; STDERR for errors; explicit exit codes (0,1,2,3,4). PASS (spec §§ User Scenarios, FR-007/FR-008)
+- Test-First & CI: TDD required; tests for success/failure/edge cases; multi-OS matrix planned. PASS (documented in plan; to be enforced in CI)
+- Versioning & Releases: SemVer; GitHub Releases with checksums and CHANGELOG. PASS (documented; to set up in release workflow)
+- Cross-Platform Builds: macOS/Linux/Windows targets; avoid OS-specific assumptions. PASS (dependencies selected for portability)
+- Exit Codes & Error Handling: deterministic codes; clear diagnostics; no secret leakage. PASS (FR-007/FR-008; research notes)
+
+Initial Constitution Check: PASS
 
 ## Project Structure
 
@@ -99,7 +106,11 @@ ios/ or android/
 └── [platform-specific structure]
 ```
 
-**Structure Decision**: [DEFAULT to Option 1 unless Technical Context indicates web/mobile app]
+**Structure Decision**: Option 1 (single project, Swift + SPM). SPM layout:
+```
+Sources/Subtree/
+Tests/SubtreeTests/
+```
 
 ## Phase 0: Outline & Research
 1. **Extract unknowns from Technical Context** above:
@@ -195,18 +206,18 @@ ios/ or android/
 *This checklist is updated during execution flow*
 
 **Phase Status**:
-- [ ] Phase 0: Research complete (/plan command)
-- [ ] Phase 1: Design complete (/plan command)
-- [ ] Phase 2: Task planning complete (/plan command - describe approach only)
+- [x] Phase 0: Research complete (/plan command)
+- [x] Phase 1: Design complete (/plan command)
+- [x] Phase 2: Task planning complete (/plan command - describe approach only)
 - [ ] Phase 3: Tasks generated (/tasks command)
 - [ ] Phase 4: Implementation complete
 - [ ] Phase 5: Validation passed
 
 **Gate Status**:
-- [ ] Initial Constitution Check: PASS
-- [ ] Post-Design Constitution Check: PASS
-- [ ] All NEEDS CLARIFICATION resolved
-- [ ] Complexity deviations documented
+- [x] Initial Constitution Check: PASS
+- [x] Post-Design Constitution Check: PASS
+- [x] All NEEDS CLARIFICATION resolved
+- [x] Complexity deviations documented
 
 ---
 *Based on Constitution v1.0.0 - See `.specify/memory/constitution.md`*

@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:subtree}",
+            "name": "Debug subtree",
+            "program": "${workspaceFolder:subtree}/.build/debug/subtree",
+            "preLaunchTask": "swift: Build Debug subtree"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:subtree}",
+            "name": "Release subtree",
+            "program": "${workspaceFolder:subtree}/.build/release/subtree",
+            "preLaunchTask": "swift: Build Release subtree"
+        }
+    ]
+}
