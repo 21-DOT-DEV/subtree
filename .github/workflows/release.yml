@@ -57,6 +57,21 @@ jobs:
           echo "✅ Linux AMD64 binary built: $(file artifacts/linux_amd64/subtree)"
           echo "✅ Linux ARM64 binary built: $(file artifacts/linux_arm64/subtree)"
           
+          # Verify architectures match expected platforms
+          if ! file artifacts/linux_amd64/subtree | grep -q "x86.64\|x86_64"; then
+            echo "❌ ERROR: AMD64 binary has wrong architecture!"
+            echo "Expected: x86_64, Got: $(file artifacts/linux_amd64/subtree)"
+            exit 1
+          fi
+          
+          if ! file artifacts/linux_arm64/subtree | grep -q "aarch64\|ARM aarch64"; then
+            echo "❌ ERROR: ARM64 binary has wrong architecture!"  
+            echo "Expected: aarch64, Got: $(file artifacts/linux_arm64/subtree)"
+            exit 1
+          fi
+          
+          echo "✅ Architecture verification passed"
+          
           # Strip and organize AMD64 binary
           strip artifacts/linux_amd64/subtree
           mv artifacts/linux_amd64/subtree "${HOME}/subtree_linux"
