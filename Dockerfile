@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
 
 # Base image and static SDK have to be updated together.
-FROM swift:6.1 AS builder
+# Use TARGETPLATFORM to force correct architecture
+ARG TARGETPLATFORM
+FROM --platform=${TARGETPLATFORM} swift:6.1 AS builder
 WORKDIR /workspace
 
 # Install Swift static SDK for better portability
@@ -13,7 +15,12 @@ RUN swift sdk install \
 COPY . /workspace
 
 # Build with static SDK using native compilation
-RUN swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 && \
+ARG TARGETPLATFORM
+RUN echo "=== Build Info ===" && \
+    echo "TARGETPLATFORM: ${TARGETPLATFORM}" && \
+    echo "Architecture: $(uname -m)" && \
+    echo "==================" && \
+    swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 && \
     find /workspace/.build -name "subtree" -type f -executable -exec cp {} /workspace/subtree \;
 
 # Final minimal runtime image
