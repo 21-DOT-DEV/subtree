@@ -50,8 +50,24 @@ jobs:
           
       - name: Strip and prepare binary
         run: |
-          strip artifacts/subtree
-          mv artifacts/subtree subtree_linux
+          echo "Checking artifacts directory structure:"
+          find artifacts -type f
+          
+          # Handle both possible output locations
+          if [ -f "artifacts/linux_amd64/subtree" ]; then
+            echo "Found binary at artifacts/linux_amd64/subtree"
+            file artifacts/linux_amd64/subtree
+            strip artifacts/linux_amd64/subtree
+            mv artifacts/linux_amd64/subtree subtree_linux
+          elif [ -f "artifacts/subtree" ]; then
+            echo "Found binary at artifacts/subtree"
+            file artifacts/subtree
+            strip artifacts/subtree
+            mv artifacts/subtree subtree_linux
+          else
+            echo "ERROR: Binary not found in expected locations"
+            exit 1
+          fi
           
       - name: Upload AMD64 Artifact
         uses: actions/upload-artifact@v4
@@ -83,8 +99,24 @@ jobs:
           
       - name: Strip and prepare binary
         run: |
-          aarch64-linux-gnu-strip artifacts/subtree
-          mv artifacts/subtree subtree_linux_aarch64
+          echo "Checking artifacts directory structure:"
+          find artifacts -type f
+          
+          # Handle both possible output locations  
+          if [ -f "artifacts/linux_arm64/subtree" ]; then
+            echo "Found binary at artifacts/linux_arm64/subtree"
+            file artifacts/linux_arm64/subtree
+            strip artifacts/linux_arm64/subtree
+            mv artifacts/linux_arm64/subtree subtree_linux_aarch64
+          elif [ -f "artifacts/subtree" ]; then
+            echo "Found binary at artifacts/subtree"
+            file artifacts/subtree
+            strip artifacts/subtree
+            mv artifacts/subtree subtree_linux_aarch64
+          else
+            echo "ERROR: Binary not found in expected locations"
+            exit 1
+          fi
           
       - name: Upload ARM64 Artifact
         uses: actions/upload-artifact@v4
