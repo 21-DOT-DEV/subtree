@@ -1,0 +1,162 @@
+name: Build Release Artifacts
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  macos:
+    name: Build macOS binary
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Build macOS binary
+        run: swift build -c release --arch arm64 --arch x86_64 -Xswiftc -Osize
+        
+      - name: Strip macOS binary  
+        run: strip -rSTx .build/apple/Products/Release/subtree
+        
+      - name: Test binary functionality
+        run: |
+          .build/apple/Products/Release/subtree --help
+          echo "✅ macOS binary responds to --help"
+        
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtree_macos
+          path: .build/apple/Products/Release/subtree
+          retention-days: 5
+
+  linux:
+    name: Build Linux binaries
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Install cross-binutils for aarch64
+        run: sudo apt install -y binutils-aarch64-linux-gnu
+        
+      - name: Build and export binaries
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          target: output
+          outputs: type=local,dest=artifacts
+          
+      - name: Test and organize binaries
+        run: |
+          # Test that binaries were built successfully
+          echo "✅ Linux AMD64 binary built: $(file artifacts/linux_amd64/subtree)"
+          echo "✅ Linux ARM64 binary built: $(file artifacts/linux_arm64/subtree)"
+          
+          # Strip and organize AMD64 binary
+          strip artifacts/linux_amd64/subtree
+          mv artifacts/linux_amd64/subtree "${HOME}/subtree_linux"
+          
+          # Strip and organize ARM64 binary  
+          aarch64-linux-gnu-strip artifacts/linux_arm64/subtree
+          mv artifacts/linux_arm64/subtree "${HOME}/subtree_linux_aarch64"
+          
+      - name: Upload AMD64 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtree_linux
+          path: ~/subtree_linux
+          retention-days: 5
+          
+      - name: Upload ARM64 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: subtree_linux_aarch64
+          path: ~/subtree_linux_aarch64
+          retention-days: 5
+
+  upload:
+    name: Upload release artifacts
+    runs-on: ubuntu-20.04
+    needs: [macos, linux]
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+        
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded_artifacts
+          
+      - name: Display structure of downloaded files
+        run: ls -R downloaded_artifacts
+        
+      - name: Prepare release binaries
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          
+          # Copy and rename binaries for release upload
+          cp downloaded_artifacts/subtree_macos/subtree "subtree_${VERSION}_macos"
+          cp downloaded_artifacts/subtree_linux/subtree_linux "subtree_${VERSION}_linux_x86_64"  
+          cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "subtree_${VERSION}_linux_arm64"
+          
+          # Make all binaries executable
+          chmod +x subtree_${VERSION}_*
+          
+      - name: Build artifact bundle
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          BUNDLE_DIR="subtree.artifactbundle"
+          
+          mkdir -p "${BUNDLE_DIR}"
+          
+          # Organize binaries by platform (universal macOS binary)
+          mkdir -p "${BUNDLE_DIR}/macos"
+          mkdir -p "${BUNDLE_DIR}/linux-x86_64"
+          mkdir -p "${BUNDLE_DIR}/linux-arm64"
+          
+          # Copy binaries to bundle structure
+          cp downloaded_artifacts/subtree_macos/subtree "${BUNDLE_DIR}/macos/subtree"
+          cp downloaded_artifacts/subtree_linux/subtree_linux "${BUNDLE_DIR}/linux-x86_64/subtree"
+          cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "${BUNDLE_DIR}/linux-arm64/subtree"
+          
+          # Create artifact bundle manifest
+          cat > "${BUNDLE_DIR}/artifactbundle.json" << EOF
+          {
+            "schemaVersion": "1.0",
+            "artifacts": {
+              "subtree": {
+                "version": "${VERSION}",
+                "type": "executable",
+                "variants": [
+                  {
+                    "path": "macos/subtree",
+                    "supportedTriples": ["arm64-apple-macosx", "x86_64-apple-macosx"]
+                  },
+                  {
+                    "path": "linux-x86_64/subtree",
+                    "supportedTriples": ["x86_64-unknown-linux-gnu"]
+                  },
+                  {
+                    "path": "linux-arm64/subtree",
+                    "supportedTriples": ["aarch64-unknown-linux-gnu"]
+                  }
+                ]
+              }
+            }
+          }
+          EOF
+          
+          # Create zip archive
+          zip -r "subtree.artifactbundle.zip" "${BUNDLE_DIR}"
+          
+      - name: Upload release binaries
+        uses: skx/github-action-publish-binaries@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: 'subtree_${{ github.event.release.tag_name }}_macos subtree_${{ github.event.release.tag_name }}_linux_x86_64 subtree_${{ github.event.release.tag_name }}_linux_arm64 subtree.artifactbundle.zip'
