@@ -134,7 +134,7 @@ jobs:
           cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "${BUNDLE_DIR}/linux-arm64/subtree"
           
           # Create artifact bundle manifest
-          cat > "${BUNDLE_DIR}/artifactbundle.json" << EOF
+          cat > "${BUNDLE_DIR}/info.json" << EOF
           {
             "schemaVersion": "1.0",
             "artifacts": {
@@ -160,8 +160,8 @@ jobs:
           }
           EOF
           
-          # Create zip archive
-          zip -r "subtree.artifactbundle.zip" "${BUNDLE_DIR}"
+          # Create zip archive with maximum compression
+          7z a -tzip -mx=9 "subtree.artifactbundle.zip" "${BUNDLE_DIR}"
           
       - name: Upload release binaries
         uses: skx/github-action-publish-binaries@master
