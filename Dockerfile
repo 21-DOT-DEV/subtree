@@ -19,10 +19,10 @@ RUN --mount=type=cache,target=/workspace/.build,id=build-$TARGETPLATFORM \
     swift sdk list && \
     case "$TARGETPLATFORM" in \
       "linux/amd64") \
-        swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 && \
+        swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 --arch x86_64 && \
         cp /workspace/.build/*/release/subtree /workspace/subtree ;; \
       "linux/arm64") \
-        swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 && \
+        swift build -c release --swift-sdk swift-6.1-RELEASE_static-linux-0.0.1 --arch arm64 && \
         cp /workspace/.build/*/release/subtree /workspace/subtree ;; \
       *) \
         echo "Unsupported platform: $TARGETPLATFORM" && exit 1 ;; \
