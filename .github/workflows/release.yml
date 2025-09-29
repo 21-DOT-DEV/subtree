@@ -81,7 +81,7 @@ jobs:
 
   upload:
     name: Upload release artifacts
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     needs: [macos, linux]
     steps:
       - name: Checkout the repository
