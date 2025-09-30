@@ -31,6 +31,7 @@ jobs:
           retention-days: 5
 
   linux-amd64:
+    name: Build Linux x86_64 binary
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +60,7 @@ jobs:
           retention-days: 5
 
   linux-arm64:
+    name: Build Linux aarch64 binary
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -98,9 +100,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: downloaded_artifacts
-          
-      - name: Display structure of downloaded files
-        run: ls -R downloaded_artifacts
         
       - name: Prepare release binaries
         run: |
@@ -162,8 +161,12 @@ jobs:
           7z a -tzip -mx=9 "subtree.artifactbundle.zip" "${BUNDLE_DIR}"
           
       - name: Upload release binaries
-        uses: skx/github-action-publish-binaries@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          args: 'subtree_${{ github.event.release.tag_name }}_macos subtree_${{ github.event.release.tag_name }}_linux_x86_64 subtree_${{ github.event.release.tag_name }}_linux_arm64 subtree.artifactbundle.zip'
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          gh release upload "${VERSION}" \
+            "subtree_${VERSION}_macos" \
+            "subtree_${VERSION}_linux_x86_64" \
+            "subtree_${VERSION}_linux_arm64" \
+            "subtree.artifactbundle.zip"
