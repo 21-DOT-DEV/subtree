@@ -130,6 +130,11 @@ jobs:
           cp downloaded_artifacts/subtree_linux/subtree_linux "${BUNDLE_DIR}/linux-x86_64/subtree"
           cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "${BUNDLE_DIR}/linux-arm64/subtree"
           
+          # Make binaries executable (critical for Swift PM to run them)
+          chmod +x "${BUNDLE_DIR}/macos/subtree"
+          chmod +x "${BUNDLE_DIR}/linux-x86_64/subtree"
+          chmod +x "${BUNDLE_DIR}/linux-arm64/subtree"
+          
           # Create artifact bundle manifest
           cat > "${BUNDLE_DIR}/info.json" << EOF
           {
