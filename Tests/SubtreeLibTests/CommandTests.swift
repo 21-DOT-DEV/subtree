@@ -17,11 +17,11 @@ struct CommandTests {
         #expect(abstract.contains("git subtree") || abstract.contains("subtree"))
         #expect(!abstract.isEmpty)
         
-        // Verify version is provided (it's optional in CommandConfiguration)
+        // Verify version is provided
         // Since we set version: "0.1.0-bootstrap" in the configuration,
         // we just verify the configuration has this set
         let config = SubtreeCommand.configuration
-        #expect(config.version != nil)
+        #expect(!config.version.isEmpty)
     }
     
     @Test("SubtreeCommand can be instantiated")

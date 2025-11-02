@@ -31,4 +31,4 @@ jobs:
       - name: Run Linux test suite
         run: |
           docker run --rm -v "$(pwd):/workspace" -w /workspace swift:6.1 \
-            bash -c 'swift package resolve && swift build --target SubtreeLibTests --jobs 2 && swift test --skip-build --filter "SubtreeLibTests" --jobs 2'  
+            bash -c 'swift package clean && swift test --filter "SubtreeLibTests" --jobs 2'
