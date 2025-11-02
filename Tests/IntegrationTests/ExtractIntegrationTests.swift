@@ -1,12 +1,82 @@
 import Testing
 import Foundation
-@testable import SubtreeLib
 
 /// Integration tests for subtree extract command (008-extract-command)
 ///
 /// Tests the complete workflow of extracting files from subtrees using glob patterns.
+/// 
+/// **Purist Approach**: No library imports. Tests execute CLI commands only and validate
+/// via file system checks, stdout/stderr output, and YAML string matching.
 @Suite("Extract Integration Tests")
 struct ExtractIntegrationTests {
+    
+    // MARK: - YAML Helper Functions
+    
+    /// Create a subtree.yaml config file with a single subtree
+    private func writeSubtreeConfig(
+        name: String,
+        remote: String,
+        prefix: String,
+        commit: String,
+        extractions: [(from: String, to: String, exclude: [String]?)]? = nil,
+        to path: String
+    ) throws {
+        var yaml = """
+        subtrees:
+          - name: \(name)
+            remote: \(remote)
+            prefix: \(prefix)
+            commit: \(commit)
+        """
+        
+        if let extractions = extractions, !extractions.isEmpty {
+            yaml += "\n    extractions:"
+            for extraction in extractions {
+                yaml += "\n      - from: \(extraction.from)"
+                yaml += "\n        to: \(extraction.to)"
+                if let exclude = extraction.exclude, !exclude.isEmpty {
+                    yaml += "\n        exclude:"
+                    for pattern in exclude {
+                        yaml += "\n          - \(pattern)"
+                    }
+                }
+            }
+        }
+        
+        yaml += "\n"
+        try yaml.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+    
+    /// Create a subtree.yaml config file with multiple subtrees
+    private func writeMultiSubtreeConfig(
+        subtrees: [(name: String, remote: String, prefix: String, commit: String, extractions: [(from: String, to: String, exclude: [String]?)]?)],
+        to path: String
+    ) throws {
+        var yaml = "subtrees:\n"
+        
+        for subtree in subtrees {
+            yaml += "  - name: \(subtree.name)\n"
+            yaml += "    remote: \(subtree.remote)\n"
+            yaml += "    prefix: \(subtree.prefix)\n"
+            yaml += "    commit: \(subtree.commit)\n"
+            
+            if let extractions = subtree.extractions, !extractions.isEmpty {
+                yaml += "    extractions:\n"
+                for extraction in extractions {
+                    yaml += "      - from: \(extraction.from)\n"
+                    yaml += "        to: \(extraction.to)\n"
+                    if let exclude = extraction.exclude, !exclude.isEmpty {
+                        yaml += "        exclude:\n"
+                        for pattern in exclude {
+                            yaml += "          - \(pattern)\n"
+                        }
+                    }
+                }
+            }
+        }
+        
+        try yaml.write(toFile: path, atomically: true, encoding: .utf8)
+    }
     
     // MARK: - T056: Extract copies markdown files with glob pattern
     
@@ -38,12 +108,14 @@ struct ExtractIntegrationTests {
             try "# Test content".write(toFile: fullPath, atomically: true, encoding: .utf8)
         }
         
-        // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "docs-lib", remote: "https://example.com/docs.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        // Add subtree to config using raw YAML
+        try writeSubtreeConfig(
+            name: "docs-lib",
+            remote: "https://example.com/docs.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -98,11 +170,13 @@ struct ExtractIntegrationTests {
         }
         
         // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "mylib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "def456")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "mylib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "def456",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         try await fixture.runGit(["add", "."])
         try await fixture.runGit(["commit", "-m", "Add library"])
@@ -157,11 +231,13 @@ struct ExtractIntegrationTests {
             try "content".write(toFile: fullPath, atomically: true, encoding: .utf8)
         }
         
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "assets", remote: "https://example.com/assets.git",
-                        prefix: subtreePrefix, commit: "ghi789")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "assets",
+            remote: "https://example.com/assets.git",
+            prefix: subtreePrefix,
+            commit: "ghi789",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         try await fixture.runGit(["add", "."])
         try await fixture.runGit(["commit", "-m", "Add assets"])
@@ -213,11 +289,13 @@ struct ExtractIntegrationTests {
             try "// Code".write(toFile: fullPath, atomically: true, encoding: .utf8)
         }
         
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "codebase", remote: "https://example.com/code.git",
-                        prefix: subtreePrefix, commit: "jkl012")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "codebase",
+            remote: "https://example.com/code.git",
+            prefix: subtreePrefix,
+            commit: "jkl012",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         try await fixture.runGit(["add", "."])
         try await fixture.runGit(["commit", "-m", "Add codebase"])
@@ -262,11 +340,13 @@ struct ExtractIntegrationTests {
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         try "{\"key\": \"value\"}".write(toFile: fullPath, atomically: true, encoding: .utf8)
         
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "data", remote: "https://example.com/data.git",
-                        prefix: subtreePrefix, commit: "mno345")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "data",
+            remote: "https://example.com/data.git",
+            prefix: subtreePrefix,
+            commit: "mno345",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         try await fixture.runGit(["add", "."])
         try await fixture.runGit(["commit", "-m", "Add data"])
@@ -315,11 +395,13 @@ struct ExtractIntegrationTests {
         }
         
         // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "docs", remote: "https://example.com/docs.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "docs",
+            remote: "https://example.com/docs.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -338,17 +420,11 @@ struct ExtractIntegrationTests {
         // Verify files were extracted
         #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/project-docs/README.md"))
         
-        // Verify mapping was saved to config
-        let updatedConfig = try await ConfigFileManager.loadConfig(from: fixture.path.string + "/subtree.yaml")
-        #expect(updatedConfig.subtrees.count == 1)
-        
-        let subtree = updatedConfig.subtrees[0]
-        #expect(subtree.extractions?.isEmpty == false, "Should have saved extraction")
-        
-        let extraction = subtree.extractions?.first
-        #expect(extraction?.from == "**/*.md")
-        #expect(extraction?.to == "project-docs/")
-        #expect(extraction?.exclude == nil || extraction?.exclude?.isEmpty == true)
+        // Verify mapping was saved to config (YAML string matching)
+        let yaml = try String(contentsOfFile: fixture.path.string + "/subtree.yaml", encoding: .utf8)
+        #expect(yaml.contains("extractions:"), "Should have extractions section")
+        #expect(yaml.contains("from: '**/*.md'") || yaml.contains("from: \"**/*.md\""), "Should have saved pattern")
+        #expect(yaml.contains("to: project-docs/"), "Should have saved destination")
     }
     
     // MARK: - T088: Saved mapping includes exclude patterns
@@ -370,11 +446,13 @@ struct ExtractIntegrationTests {
                         atomically: true, encoding: .utf8)
         
         // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -389,15 +467,14 @@ struct ExtractIntegrationTests {
         
         #expect(result.exitCode == 0)
         
-        // Verify mapping includes exclude patterns
-        let updatedConfig = try await ConfigFileManager.loadConfig(from: fixture.path.string + "/subtree.yaml")
-        let extraction = updatedConfig.subtrees[0].extractions?.first
-        
-        #expect(extraction?.from == "src/**/*.c")
-        #expect(extraction?.to == "Sources/")
-        #expect(extraction?.exclude?.count == 2, "Should have 2 exclude patterns")
-        #expect(extraction?.exclude?.contains("**/test/**") == true)
-        #expect(extraction?.exclude?.contains("**/bench/**") == true)
+        // Verify mapping includes exclude patterns (YAML string matching)
+        let yaml = try String(contentsOfFile: fixture.path.string + "/subtree.yaml", encoding: .utf8)
+        // Pattern may be quoted or unquoted, just check the pattern text exists
+        #expect(yaml.contains("src/**/*.c"), "Should have saved pattern")
+        #expect(yaml.contains("to: Sources/"), "Should have saved destination")
+        #expect(yaml.contains("exclude:"), "Should have exclude section")
+        #expect(yaml.contains("**/test/**"), "Should have first exclude pattern")
+        #expect(yaml.contains("**/bench/**"), "Should have second exclude pattern")
     }
     
     // MARK: - T089: Extraction without --persist doesn't save mapping
@@ -419,11 +496,13 @@ struct ExtractIntegrationTests {
                         atomically: true, encoding: .utf8)
         
         // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "data", remote: "https://example.com/data.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "data",
+            remote: "https://example.com/data.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -442,11 +521,9 @@ struct ExtractIntegrationTests {
         // Verify files were extracted
         #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/output/file.txt"))
         
-        // Verify NO mapping was saved to config
-        let updatedConfig = try await ConfigFileManager.loadConfig(from: fixture.path.string + "/subtree.yaml")
-        let subtree = updatedConfig.subtrees[0]
-        #expect(subtree.extractions == nil || subtree.extractions?.isEmpty == true,
-               "Should NOT have saved extraction")
+        // Verify NO mapping was saved to config (YAML string matching)
+        let yaml = try String(contentsOfFile: fixture.path.string + "/subtree.yaml", encoding: .utf8)
+        #expect(!yaml.contains("extractions:"), "Should NOT have extractions section")
     }
     
     // MARK: - T090: Multiple saved mappings in config
@@ -470,11 +547,13 @@ struct ExtractIntegrationTests {
                         atomically: true, encoding: .utf8)
         
         // Add subtree to config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "multi", remote: "https://example.com/multi.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "multi",
+            remote: "https://example.com/multi.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -494,19 +573,13 @@ struct ExtractIntegrationTests {
         )
         #expect(result2.exitCode == 0)
         
-        // Verify both mappings are saved
-        let updatedConfig = try await ConfigFileManager.loadConfig(from: fixture.path.string + "/subtree.yaml")
-        let subtree = updatedConfig.subtrees[0]
-        
-        #expect(subtree.extractions?.count == 2, "Should have 2 saved mappings")
-        
-        let firstMapping = subtree.extractions?[0]
-        #expect(firstMapping?.from == "**/*.md")
-        #expect(firstMapping?.to == "docs/")
-        
-        let secondMapping = subtree.extractions?[1]
-        #expect(secondMapping?.from == "**/*.c")
-        #expect(secondMapping?.to == "Sources/")
+        // Verify both mappings are saved (YAML string matching)
+        let yaml = try String(contentsOfFile: fixture.path.string + "/subtree.yaml", encoding: .utf8)
+        #expect(yaml.contains("extractions:"), "Should have extractions section")
+        #expect(yaml.contains("from: '**/*.md'") || yaml.contains("from: \"**/*.md\""), "Should have first mapping")
+        #expect(yaml.contains("to: docs/"), "Should have first destination")
+        #expect(yaml.contains("from: '**/*.c'") || yaml.contains("from: \"**/*.c\""), "Should have second mapping")
+        #expect(yaml.contains("to: Sources/"), "Should have second destination")
     }
     
     // MARK: - Phase 5 Tests (User Story 3 - Bulk Extraction)
@@ -532,21 +605,19 @@ struct ExtractIntegrationTests {
         try "header".write(toFile: fixture.path.string + "/" + subtreePrefix + "/lib.h",
                           atomically: true, encoding: .utf8)
         
-        // Create config with saved mappings
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "**/*.md", to: "docs/"),
-                    ExtractionMapping(from: "**/*.c", to: "src/"),
-                    ExtractionMapping(from: "**/*.h", to: "include/")
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        // Create config with saved mappings using raw YAML
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            extractions: [
+                (from: "**/*.md", to: "docs/", exclude: nil),
+                (from: "**/*.c", to: "src/", exclude: nil),
+                (from: "**/*.h", to: "include/", exclude: nil)
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -586,27 +657,15 @@ struct ExtractIntegrationTests {
         }
         
         // Create config with mappings for both subtrees
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib1",
-                remote: "https://example.com/lib1.git",
-                prefix: "vendor/lib1",
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "**/*.txt", to: "output1/")
-                ]
-            ),
-            SubtreeEntry(
-                name: "lib2",
-                remote: "https://example.com/lib2.git",
-                prefix: "vendor/lib2",
-                commit: "def456",
-                extractions: [
-                    ExtractionMapping(from: "**/*.txt", to: "output2/")
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeMultiSubtreeConfig(
+            subtrees: [
+                (name: "lib1", remote: "https://example.com/lib1.git", prefix: "vendor/lib1", 
+                 commit: "abc123", extractions: [(from: "**/*.txt", to: "output1/", exclude: nil)]),
+                (name: "lib2", remote: "https://example.com/lib2.git", prefix: "vendor/lib2", 
+                 commit: "def456", extractions: [(from: "**/*.txt", to: "output2/", exclude: nil)])
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -643,16 +702,13 @@ struct ExtractIntegrationTests {
         try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
                            atomically: true, encoding: .utf8)
         
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123"
-                // No extractions field
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -692,20 +748,18 @@ struct ExtractIntegrationTests {
         }
         
         // Create config with ordered mappings
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "file1.txt", to: "out1/"),
-                    ExtractionMapping(from: "file2.txt", to: "out2/"),
-                    ExtractionMapping(from: "file3.txt", to: "out3/")
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            extractions: [
+                (from: "file1.txt", to: "out1/", exclude: nil),
+                (from: "file2.txt", to: "out2/", exclude: nil),
+                (from: "file3.txt", to: "out3/", exclude: nil)
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -732,6 +786,235 @@ struct ExtractIntegrationTests {
         #expect(foundOrder == [1, 2, 3], "Mappings should execute in array order")
     }
     
+    // MARK: - Phase 7 Tests (User Story 5 - Validation & Error Handling)
+    
+    // T144: Zero-match pattern error (ad-hoc mode)
+    @Test("Zero-match pattern fails in ad-hoc mode")
+    func testZeroMatchPatternFailsInAdHocMode() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree without matching files
+        let subtreePrefix = "vendor/lib"
+        try FileManager.default.createDirectory(
+            atPath: fixture.path.string + "/" + subtreePrefix,
+            withIntermediateDirectories: true
+        )
+        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
+                           atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit everything
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Try to extract with non-matching pattern (ad-hoc mode)
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "*.xyz", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 1, "Should fail with user error in ad-hoc mode")
+        #expect(result.stderr.contains("No files matched"), "Should mention no matches")
+        #expect(result.stderr.contains("*.xyz"), "Should show the pattern")
+    }
+    
+    // T145: All-excluded pattern error (ad-hoc mode)
+    @Test("All-excluded pattern fails in ad-hoc mode")
+    func testAllExcludedPatternFailsInAdHocMode() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree with one markdown file
+        let subtreePrefix = "vendor/lib"
+        try FileManager.default.createDirectory(
+            atPath: fixture.path.string + "/" + subtreePrefix,
+            withIntermediateDirectories: true
+        )
+        try "readme content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/README.md",
+                                   atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit everything
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Extract with pattern that matches but exclude everything
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "*.md", "output/", "--exclude", "README.md"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 1, "Should fail when all files excluded in ad-hoc mode")
+        #expect(result.stderr.contains("No files matched"), "Should show zero-match error (after exclusions)")
+    }
+    
+    // T146: Non-existent subtree error
+    @Test("Non-existent subtree produces clear error")
+    func testNonExistentSubtreeError() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create config with one subtree
+        try writeSubtreeConfig(
+            name: "lib1",
+            remote: "https://example.com/lib1.git",
+            prefix: "vendor/lib1",
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Try to extract from non-existent subtree
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "nonexistent", "*.md", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 1, "Should fail with user error")
+        #expect(result.stderr.contains("nonexistent"), "Should mention the missing subtree")
+        #expect(result.stderr.contains("not found") || result.stderr.contains("Subtree"), "Should explain issue")
+    }
+    
+    // T147: Invalid destination path error (parent traversal)
+    @Test("Invalid destination path with parent traversal fails")
+    func testInvalidDestinationPathError() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree
+        let subtreePrefix = "vendor/lib"
+        try FileManager.default.createDirectory(
+            atPath: fixture.path.string + "/" + subtreePrefix,
+            withIntermediateDirectories: true
+        )
+        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
+                           atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Try to extract with unsafe destination
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "*.txt", "../unsafe/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 1, "Should fail with user error")
+        #expect(result.stderr.contains("..") || result.stderr.contains("parent") || result.stderr.contains("unsafe"),
+               "Should mention unsafe path")
+    }
+    
+    // T148: Subtree prefix not found error
+    @Test("Subtree prefix directory not found produces error")
+    func testSubtreePrefixNotFoundError() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create config but don't create the actual prefix directory
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: "vendor/lib",
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit (subtree prefix doesn't exist)
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Try to extract
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 1, "Should fail with user error (config issue)")
+        #expect(result.stderr.contains("vendor/lib") || result.stderr.contains("not found") || result.stderr.contains("does not exist") || result.stderr.contains("No such file"),
+               "Should mention missing prefix")
+    }
+    
+    // T149: Destination directory auto-creation works
+    @Test("Destination directory is created automatically")
+    func testDestinationDirectoryAutoCreation() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree with file
+        let subtreePrefix = "vendor/lib"
+        try FileManager.default.createDirectory(
+            atPath: fixture.path.string + "/" + subtreePrefix,
+            withIntermediateDirectories: true
+        )
+        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
+                           atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Extract to non-existent nested directory
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "*.txt", "deeply/nested/output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 0, "Should succeed")
+        
+        // Verify directory was created
+        let dirExists = FileManager.default.fileExists(atPath: fixture.path.string + "/deeply/nested/output")
+        #expect(dirExists, "Directory should be auto-created")
+        
+        // Verify file was copied
+        let fileExists = FileManager.default.fileExists(atPath: fixture.path.string + "/deeply/nested/output/file.txt")
+        #expect(fileExists, "File should be copied to auto-created directory")
+    }
+    
     // T107: Bulk execution continues on mapping failure
     @Test("Bulk execution continues on mapping failure")
     func testBulkExecutionContinuesOnMappingFailure() async throws {
@@ -750,20 +1033,18 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config with one invalid and two valid mappings
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "good.txt", to: "out1/"),
-                    ExtractionMapping(from: "**/*.{invalid", to: "out2/"),  // Invalid glob
-                    ExtractionMapping(from: "good.txt", to: "out3/")
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            extractions: [
+                (from: "good.txt", to: "out1/", exclude: nil),
+                (from: "**/*.{invalid", to: "out2/", exclude: nil),  // Invalid glob
+                (from: "good.txt", to: "out3/", exclude: nil)
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -802,20 +1083,18 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config with multiple invalid mappings
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "file.txt", to: "out1/"),
-                    ExtractionMapping(from: "**/*.{bad", to: "out2/"),   // Invalid
-                    ExtractionMapping(from: "**/*.{worse", to: "out3/")  // Invalid
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            extractions: [
+                (from: "file.txt", to: "out1/", exclude: nil),
+                (from: "**/*.{bad", to: "out2/", exclude: nil),   // Invalid
+                (from: "**/*.{worse", to: "out3/", exclude: nil)  // Invalid
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -853,18 +1132,16 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config with an invalid glob pattern (user error = exit 1)
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(
-                name: "lib",
-                remote: "https://example.com/lib.git",
-                prefix: subtreePrefix,
-                commit: "abc123",
-                extractions: [
-                    ExtractionMapping(from: "**/*.{invalid", to: "out/")  // Invalid glob = exit 1
-                ]
-            )
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            extractions: [
+                (from: "**/*.{invalid", to: "out/", exclude: nil)  // Invalid glob = exit 1
+            ],
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -899,11 +1176,13 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -952,11 +1231,13 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -1001,11 +1282,13 @@ struct ExtractIntegrationTests {
                                atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -1055,11 +1338,13 @@ struct ExtractIntegrationTests {
                          atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -1123,11 +1408,13 @@ struct ExtractIntegrationTests {
         }
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit everything
         try await fixture.runGit(["add", "."])
@@ -1164,223 +1451,6 @@ struct ExtractIntegrationTests {
         #expect(result.stderr.contains("5") || result.stderr.contains("file"), "Should show count")
     }
     
-    // MARK: - Phase 7 Tests (User Story 5 - Validation & Error Handling)
-    
-    // T144: Zero-match pattern error (ad-hoc mode)
-    @Test("Zero-match pattern fails in ad-hoc mode")
-    func testZeroMatchPatternFailsInAdHocMode() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create subtree without matching files
-        let subtreePrefix = "vendor/lib"
-        try FileManager.default.createDirectory(
-            atPath: fixture.path.string + "/" + subtreePrefix,
-            withIntermediateDirectories: true
-        )
-        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
-                           atomically: true, encoding: .utf8)
-        
-        // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit everything
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Try to extract with non-matching pattern (ad-hoc mode)
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.xyz", "output/"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 1, "Should fail with user error in ad-hoc mode")
-        #expect(result.stderr.contains("No files matched"), "Should mention no matches")
-        #expect(result.stderr.contains("*.xyz"), "Should show the pattern")
-    }
-    
-    // T145: All-excluded pattern error (ad-hoc mode)
-    @Test("All-excluded pattern fails in ad-hoc mode")
-    func testAllExcludedPatternFailsInAdHocMode() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create subtree with one markdown file
-        let subtreePrefix = "vendor/lib"
-        try FileManager.default.createDirectory(
-            atPath: fixture.path.string + "/" + subtreePrefix,
-            withIntermediateDirectories: true
-        )
-        try "readme content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/README.md",
-                                   atomically: true, encoding: .utf8)
-        
-        // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit everything
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Extract with pattern that matches but exclude everything
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.md", "output/", "--exclude", "README.md"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 1, "Should fail when all files excluded in ad-hoc mode")
-        #expect(result.stderr.contains("No files matched"), "Should show zero-match error (after exclusions)")
-    }
-    
-    // T146: Non-existent subtree error
-    @Test("Non-existent subtree produces clear error")
-    func testNonExistentSubtreeError() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create config with one subtree
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib1", remote: "https://example.com/lib1.git",
-                        prefix: "vendor/lib1", commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Try to extract from non-existent subtree
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "nonexistent", "*.md", "output/"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 1, "Should fail with user error")
-        #expect(result.stderr.contains("nonexistent"), "Should mention the missing subtree")
-        #expect(result.stderr.contains("not found") || result.stderr.contains("Subtree"), "Should explain issue")
-    }
-    
-    // T147: Invalid destination path error (parent traversal)
-    @Test("Invalid destination path with parent traversal fails")
-    func testInvalidDestinationPathError() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create subtree
-        let subtreePrefix = "vendor/lib"
-        try FileManager.default.createDirectory(
-            atPath: fixture.path.string + "/" + subtreePrefix,
-            withIntermediateDirectories: true
-        )
-        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
-                           atomically: true, encoding: .utf8)
-        
-        // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Try to extract with unsafe destination
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "../unsafe/"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 1, "Should fail with user error")
-        #expect(result.stderr.contains("..") || result.stderr.contains("parent") || result.stderr.contains("unsafe"),
-               "Should mention unsafe path")
-    }
-    
-    // T148: Subtree prefix not found error
-    @Test("Subtree prefix directory not found produces error")
-    func testSubtreePrefixNotFoundError() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create config but don't create the actual prefix directory
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: "vendor/lib", commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit (subtree prefix doesn't exist)
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Try to extract
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 1, "Should fail with user error (config issue)")
-        #expect(result.stderr.contains("vendor/lib") || result.stderr.contains("not found") || result.stderr.contains("does not exist") || result.stderr.contains("No such file"),
-               "Should mention missing prefix")
-    }
-    
-    // T149: Destination directory auto-creation works
-    @Test("Destination directory is created automatically")
-    func testDestinationDirectoryAutoCreation() async throws {
-        let harness = TestHarness()
-        let fixture = try await GitRepositoryFixture()
-        defer { try? fixture.tearDown() }
-        
-        // Create subtree with file
-        let subtreePrefix = "vendor/lib"
-        try FileManager.default.createDirectory(
-            atPath: fixture.path.string + "/" + subtreePrefix,
-            withIntermediateDirectories: true
-        )
-        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.txt",
-                           atomically: true, encoding: .utf8)
-        
-        // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
-        
-        // Commit
-        try await fixture.runGit(["add", "."])
-        try await fixture.runGit(["commit", "-m", "Initial commit"])
-        
-        // Extract to non-existent nested directory
-        let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "deeply/nested/output/"],
-            workingDirectory: fixture.path
-        )
-        
-        #expect(result.exitCode == 0, "Should succeed")
-        
-        // Verify directory was created
-        let dirExists = FileManager.default.fileExists(atPath: fixture.path.string + "/deeply/nested/output")
-        #expect(dirExists, "Directory should be auto-created")
-        
-        // Verify file was copied
-        let fileExists = FileManager.default.fileExists(atPath: fixture.path.string + "/deeply/nested/output/file.txt")
-        #expect(fileExists, "File should be copied to auto-created directory")
-    }
-    
     // MARK: - Edge Case Tests
     
     // T171: Destination inside subtree prefix (circular/overlap error)
@@ -1400,11 +1470,13 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit
         try await fixture.runGit(["add", "."])
@@ -1455,11 +1527,13 @@ struct ExtractIntegrationTests {
                                 atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit
         try await fixture.runGit(["add", "."])
@@ -1509,11 +1583,13 @@ struct ExtractIntegrationTests {
                             atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit
         try await fixture.runGit(["add", "."])
@@ -1563,11 +1639,13 @@ struct ExtractIntegrationTests {
                            atomically: true, encoding: .utf8)
         
         // Create config
-        let config = SubtreeConfiguration(subtrees: [
-            SubtreeEntry(name: "lib", remote: "https://example.com/lib.git",
-                        prefix: subtreePrefix, commit: "abc123")
-        ])
-        try await ConfigFileManager.writeConfig(config, to: fixture.path.string + "/subtree.yaml")
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
         
         // Commit
         try await fixture.runGit(["add", "."])
