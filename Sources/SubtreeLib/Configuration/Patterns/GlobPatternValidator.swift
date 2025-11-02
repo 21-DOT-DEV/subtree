@@ -52,20 +52,15 @@ public struct GlobPatternValidator {
     
     private func validateBraces(_ pattern: String) -> String? {
         var braceDepth = 0
-        var inBraceExpansion = false
         
         for char in pattern {
             switch char {
             case "{":
                 braceDepth += 1
-                inBraceExpansion = true
             case "}":
                 braceDepth -= 1
                 if braceDepth < 0 {
                     return "Unexpected closing brace '}' without matching opening brace"
-                }
-                if braceDepth == 0 {
-                    inBraceExpansion = false
                 }
             default:
                 break

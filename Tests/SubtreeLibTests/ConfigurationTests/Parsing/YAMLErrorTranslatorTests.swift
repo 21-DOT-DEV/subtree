@@ -14,8 +14,12 @@ struct YAMLErrorTranslatorTests {
         
         let result = YAMLErrorTranslator.translate(error: testError)
         
-        // Should return a ConfigurationError
-        #expect(result is ConfigurationError)
+        // Should return a ConfigurationError with yamlSyntaxError case
+        if case .yamlSyntaxError = result {
+            // Success - error was translated
+        } else {
+            #expect(Bool(false), "Expected yamlSyntaxError case")
+        }
     }
     
     @Test("Pass through ConfigurationError unchanged")

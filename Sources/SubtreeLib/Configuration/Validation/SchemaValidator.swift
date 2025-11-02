@@ -11,7 +11,7 @@ public struct SchemaValidator {
     /// - Parameter config: Configuration to validate
     /// - Returns: Array of validation errors (empty if valid)
     public func validate(_ config: SubtreeConfiguration) -> [ValidationError] {
-        var errors: [ValidationError] = []
+        let errors: [ValidationError] = []
         
         // FR-001: subtrees array exists (always true since it's required in model)
         // FR-031: Empty array is valid - no error

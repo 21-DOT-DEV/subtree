@@ -1,6 +1,13 @@
 import ArgumentParser
 import Foundation
 
+// MARK: - Concurrency-Safe Error Output
+
+/// Writes a message to stderr in a concurrency-safe way
+private func writeStderr(_ message: String) {
+    FileHandle.standardError.write(Data(message.utf8))
+}
+
 /// Extract files from a subtree using glob patterns (008-extract-command / User Story 1)
 ///
 /// This command supports two modes:
@@ -95,14 +102,14 @@ public struct ExtractCommand: AsyncParsableCommand {
         if hasPositionalArgs {
             // AD-HOC MODE: Extract specific pattern
             if all {
-                fputs("❌ Error: --all flag cannot be used with pattern/destination arguments\n", stderr)
-                fputs("   For ad-hoc extraction, use: subtree extract --name <name> <pattern> <destination>\n", stderr)
-                fputs("   For bulk extraction, use: subtree extract --all\n", stderr)
+                writeStderr("❌ Error: --all flag cannot be used with pattern/destination arguments\n")
+                writeStderr("   For ad-hoc extraction, use: subtree extract --name <name> <pattern> <destination>\n")
+                writeStderr("   For bulk extraction, use: subtree extract --all\n")
                 Foundation.exit(1)
             }
             
             guard let subtreeName = name else {
-                fputs("❌ Error: --name is required for ad-hoc extraction\n", stderr)
+                writeStderr("❌ Error: --name is required for ad-hoc extraction\n")
                 Foundation.exit(1)
             }
             
@@ -110,14 +117,14 @@ public struct ExtractCommand: AsyncParsableCommand {
         } else {
             // BULK MODE: Execute saved mappings
             if pattern != nil || destination != nil {
-                fputs("❌ Error: Pattern and destination must both be provided or both omitted\n", stderr)
+                writeStderr("❌ Error: Pattern and destination must both be provided or both omitted\n")
                 Foundation.exit(1)
             }
             
             if !all && name == nil {
-                fputs("❌ Error: Must specify either --name or --all for bulk extraction\n", stderr)
-                fputs("   Usage: subtree extract --name <name>\n", stderr)
-                fputs("          subtree extract --all\n", stderr)
+                writeStderr("❌ Error: Must specify either --name or --all for bulk extraction\n")
+                writeStderr("   Usage: subtree extract --name <name>\n")
+                writeStderr("          subtree extract --all\n")
                 Foundation.exit(1)
             }
             
@@ -129,7 +136,7 @@ public struct ExtractCommand: AsyncParsableCommand {
     
     private func runAdHocExtraction(subtreeName: String) async throws {
         guard let patternValue = pattern, let destinationValue = destination else {
-            fputs("❌ Internal error: Missing pattern or destination in ad-hoc mode\n", stderr)
+            writeStderr("❌ Internal error: Missing pattern or destination in ad-hoc mode\n")
             Foundation.exit(2)
         }
         
@@ -153,11 +160,11 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         // T150: Zero-match validation (ad-hoc mode = error)
         guard !matchedFiles.isEmpty else {
-            fputs("❌ Error: No files matched pattern '\(patternValue)' in subtree '\(subtreeName)'\n\n", stderr)
-            fputs("Suggestions:\n", stderr)
-            fputs("  • Check pattern syntax\n", stderr)
-            fputs("  • Verify files exist in \(subtree.prefix)/\n", stderr)
-            fputs("  • Try a broader pattern like '**/*'\n", stderr)
+            writeStderr("❌ Error: No files matched pattern '\(patternValue)' in subtree '\(subtreeName)'\n\n")
+            writeStderr("Suggestions:\n")
+            writeStderr("  • Check pattern syntax\n")
+            writeStderr("  • Verify files exist in \(subtree.prefix)/\n")
+            writeStderr("  • Try a broader pattern like '**/*'\n")
             Foundation.exit(1)  // User error
         }
         
@@ -226,12 +233,12 @@ public struct ExtractCommand: AsyncParsableCommand {
             if let subtree = try? config.findSubtree(name: subtreeName.normalized()) {
                 subtreesToProcess = [subtree]
             } else {
-                fputs("❌ Error: Subtree '\(subtreeName)' not found in config\n", stderr)
+                writeStderr("❌ Error: Subtree '\(subtreeName)' not found in config\n")
                 Foundation.exit(1)
             }
         } else {
             // This shouldn't happen due to validation above
-            fputs("❌ Error: Must specify --name or --all\n", stderr)
+            writeStderr("❌ Error: Must specify --name or --all\n")
             Foundation.exit(1)
         }
         
@@ -382,7 +389,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         do {
             return try await GitOperations.findGitRoot()
         } catch {
-            fputs("❌ Error: Not in a git repository\n", stderr)
+            writeStderr("❌ Error: Not in a git repository\n")
             Foundation.exit(1)
         }
     }
@@ -390,14 +397,14 @@ public struct ExtractCommand: AsyncParsableCommand {
     /// Verify subtree.yaml exists
     private func validateConfigExists(at path: String) async throws -> SubtreeConfiguration {
         guard ConfigFileManager.exists(at: path) else {
-            fputs("❌ Error: subtree.yaml not found. Run 'subtree init' first.\n", stderr)
+            writeStderr("❌ Error: subtree.yaml not found. Run 'subtree init' first.\n")
             Foundation.exit(3)
         }
         
         do {
             return try await ConfigFileManager.loadConfig(from: path)
         } catch {
-            fputs("❌ Error: Failed to parse subtree.yaml: \(error.localizedDescription)\n", stderr)
+            writeStderr("❌ Error: Failed to parse subtree.yaml: \(error.localizedDescription)\n")
             Foundation.exit(3)
         }
     }
@@ -412,7 +419,7 @@ public struct ExtractCommand: AsyncParsableCommand {
             }
             return entry
         } catch let error as SubtreeValidationError {
-            fputs("\(error.errorDescription ?? "Error")\n", stderr)
+            writeStderr("\(error.errorDescription ?? "Error")\n")
             Foundation.exit(Int32(error.exitCode))
         }
     }
@@ -424,7 +431,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         guard FileManager.default.fileExists(atPath: prefixPath, isDirectory: &isDirectory),
               isDirectory.boolValue else {
-            fputs("❌ Error: Subtree directory '\(prefix)' not found in repository\n", stderr)
+            writeStderr("❌ Error: Subtree directory '\(prefix)' not found in repository\n")
             Foundation.exit(1)
         }
     }
@@ -437,19 +444,19 @@ public struct ExtractCommand: AsyncParsableCommand {
         let trimmed = dest.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard !trimmed.isEmpty else {
-            fputs("❌ Error: Destination path cannot be empty\n", stderr)
+            writeStderr("❌ Error: Destination path cannot be empty\n")
             Foundation.exit(1)
         }
         
         // Check for absolute path
         if trimmed.hasPrefix("/") {
-            fputs("❌ Error: Destination must be a relative path (got: '\(trimmed)')\n", stderr)
+            writeStderr("❌ Error: Destination must be a relative path (got: '\(trimmed)')\n")
             Foundation.exit(1)
         }
         
         // Check for parent traversal
         if trimmed.contains("..") {
-            fputs("❌ Error: Destination cannot contain '..' (got: '\(trimmed)')\n", stderr)
+            writeStderr("❌ Error: Destination cannot contain '..' (got: '\(trimmed)')\n")
             Foundation.exit(1)
         }
         
@@ -460,7 +467,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         let canonicalDest = URL(fileURLWithPath: fullPath).resolvingSymlinksInPath().path
         
         guard canonicalDest.hasPrefix(canonicalGitRoot + "/") || canonicalDest == canonicalGitRoot else {
-            fputs("❌ Error: Destination must be within git repository\n", stderr)
+            writeStderr("❌ Error: Destination must be within git repository\n")
             Foundation.exit(1)
         }
         
@@ -621,7 +628,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         if fileManager.fileExists(atPath: path, isDirectory: &isDirectory) {
             // Path exists - verify it's a directory
             guard isDirectory.boolValue else {
-                fputs("❌ Error: Destination '\(path)' exists but is not a directory\n", stderr)
+                writeStderr("❌ Error: Destination '\(path)' exists but is not a directory\n")
                 Foundation.exit(1)
             }
             // Directory exists, nothing to do
@@ -723,22 +730,22 @@ public struct ExtractCommand: AsyncParsableCommand {
     private func handleOverwriteProtection(trackedFiles: [String]) throws -> Never {
         let count = trackedFiles.count
         
-        fputs("❌ Error: Cannot overwrite \(count) git-tracked file\(count == 1 ? "" : "s")\n\n", stderr)
-        fputs("Protected files:\n", stderr)
+        writeStderr("❌ Error: Cannot overwrite \(count) git-tracked file\(count == 1 ? "" : "s")\n\n")
+        writeStderr("Protected files:\n")
         
         // Show all files if <= 20, otherwise show first 5 + count
         if count <= 20 {
             for file in trackedFiles {
-                fputs("  • \(file)\n", stderr)
+                writeStderr("  • \(file)\n")
             }
         } else {
             for file in trackedFiles.prefix(5) {
-                fputs("  • \(file)\n", stderr)
+                writeStderr("  • \(file)\n")
             }
-            fputs("  ... and \(count - 5) more\n", stderr)
+            writeStderr("  ... and \(count - 5) more\n")
         }
         
-        fputs("\nUse --force to override protection\n", stderr)
+        writeStderr("\nUse --force to override protection\n")
         Foundation.exit(2)  // System error code for overwrite protection
     }
 }
