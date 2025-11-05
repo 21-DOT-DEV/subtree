@@ -1,94 +1,220 @@
 <!--
-Sync Impact Report
-- Version change: N/A → 1.0.0
-- Modified principles:
-  - New: CLI I/O Contract
-  - New: Test-First & CI
-  - New: Versioning & Releases
-  - New: Cross-Platform Builds
-  - New: Exit Codes & Error Handling
-- Added sections:
-  - Additional Constraints
-  - Development Workflow & Quality Gates
-- Removed sections: None
-- Templates requiring updates:
-  - .specify/templates/plan-template.md — ✅ aligned (Constitution Check section remains valid; version reference is a template comment)
-  - .specify/templates/spec-template.md — ✅ aligned
-  - .specify/templates/tasks-template.md — ✅ aligned
-  - .specify/templates/commands/* — N/A (directory not present)
-- Follow-up TODOs:
-  - Consider updating the footer note in plan-template.md to reference the current constitution version dynamically.
+SYNC IMPACT REPORT - Constitution Update
+═══════════════════════════════════════════════════════════════════════════════
+Version Change: [NEW] → 1.0.0
+
+Modified Principles:
+  - [ALL PRINCIPLES NEW - Initial constitution ratification]
+
+Added Sections:
+  ✅ Core Principles (I-V)
+  ✅ CI & Quality Gates
+  ✅ Agent Maintenance Rules
+  ✅ Governance
+
+Removed Sections:
+  - None (initial version)
+
+Template Alignment Status:
+  ✅ spec-template.md - Aligned with spec-first principle (supports Implementation Notes block)
+  ✅ plan-template.md - Contains Constitution Check section ready for gates
+  ✅ tasks-template.md - Organized by user stories with test-first guidance
+  ⚠️  .windsurf/rules - Must be created/updated after each successful spec implementation
+
+Follow-up TODOs:
+  - Agent must create/update .windsurf/rules after first spec completion
+  - Ensure bootstrap spec (spec 000 or spec 001) establishes test & CI harness
+═══════════════════════════════════════════════════════════════════════════════
 -->
 
-# Subtree Constitution
+# Subtree CLI Constitution
 
 ## Core Principles
 
-### I. CLI I/O Contract
-Subtree is a non-interactive, pipeline-friendly CLI by default.
-- Input: command-line args and STDIN; Output: STDOUT; Errors/warnings: STDERR.
-- Default output is human-readable. When `--json` is provided, output MUST be valid JSON and stable across patch releases.
-- Exit codes: `0` success, `1` general failure, `2` usage/argument error, `3` I/O/environment error. Additional codes MAY be defined per subcommand and documented in `--help`.
-- No interactive prompts unless `--interactive` (or equivalent) is explicitly passed and TTY is detected.
-- Color and TTY behavior: enable colors only when attached to a TTY; support `--no-color` to disable.
-- Required flags across all binaries: `--help`, `--version`, `--json` (where applicable), and `--quiet` to suppress non-essential output.
+### I. Spec-First Development (NON-NEGOTIABLE)
 
-### II. Test-First & CI (NON-NEGOTIABLE)
-Test-Driven Development is mandatory for all changes.
-- Red-Green-Refactor: write failing tests before implementation; refactor only with tests green.
-- CI MUST run `swift build` and `swift test` on all supported platforms/architectures where feasible.
-- New flags/behavior MUST include tests for success, failure, and edge cases; JSON mode outputs MUST have schema assertions.
-- No PR may merge with failing tests or without coverage of new behavior.
+Every behavior change or feature MUST begin with a `spec.md` file that defines:
 
-### III. Versioning & Releases
-We use Semantic Versioning for the public CLI surface and output schemas.
-- Versioning: MAJOR.MINOR.PATCH. Breaking CLI or JSON changes require a MAJOR release.
-- Tags: `vX.Y.Z`. Releases are published as GitHub Releases with asset checksums.
-- Deliverables: prebuilt binaries for all supported OS/architectures; include SHA-256 checksums and a plaintext CHANGELOG entry.
-- Deprecations MUST be announced one MINOR release before removal, when feasible.
+- User scenarios with acceptance criteria in Given-When-Then format
+- Failing tests that encode the acceptance criteria
+- Measurable success criteria
+- Functional requirements (technology-agnostic)
 
-### IV. Cross-Platform Builds
-Subtree MUST build and function on the defined matrix without code divergence.
-- Targets: macOS (arm64, x86_64), Linux glibc (x86_64, arm64), Windows (arm64, x86_64).
-- Source MUST avoid OS-specific assumptions (paths, encodings, newlines). Use Swift standard library and portability utilities.
-- CI SHOULD produce artifacts for each target or validate via matrix builds where native toolchains exist.
+**Bootstrap Requirement**: The first spec (spec 000 or spec 001) MUST establish the test harness and CI infrastructure used by all subsequent specs. This bootstrap spec defines the testing framework, test organization, CI configuration, and quality gates that govern the project.
 
-### V. Exit Codes & Error Handling
-All commands MUST return deterministic exit codes and clear diagnostics.
-- Human-readable errors go to STDERR; JSON mode emits `{ "error": { "code": <int>, "message": <string>, "details": <object|null> } }` on STDERR.
-- Verbosity controls: `--quiet` suppresses info-level logs; `--trace` may include stack traces for debugging.
-- Never print secrets or tokens. Redact in logs and error messages.
+**Spec Organization**: Each spec MUST be small, independent, and focused on a single feature or small subfeature. Specs are stored in `specs/###-feature-name/spec.md` with related design artifacts (plan.md, tasks.md, etc.).
 
-## Additional Constraints
+**Implementation Notes**: Specs MAY include an optional "Implementation Notes" section at the end for language-specific guidance (preferably Swift for this project). However, the main spec body MUST remain behavior-focused, test-driven, and technology-agnostic.
 
-- Language/Runtime: Swift + Swift Package Manager (SPM). No alternate build systems.
-- Baseline commands: `--help`, `--version`, `--json` (where applicable), `--quiet`.
-- Distribution: GitHub Releases with prebuilt binaries; include SHA-256 checksums and a CHANGELOG entry.
-- Dependency policy: all dependencies pinned via `Package.resolved`; reproducible builds required.
-- Security: no network calls during execution unless explicitly required by a subcommand and documented.
+**Rationale**: Spec-first development ensures clear requirements, prevents scope creep, enables independent testing, and creates executable documentation. The bootstrap spec prevents test infrastructure drift across features.
 
-## Development Workflow & Quality Gates
+### II. Test-Driven Development (NON-NEGOTIABLE)
 
-1) Tests First
-- All new behavior lands with failing tests first, then implementation.
-- JSON output schemas validated in tests.
+All implementation MUST follow strict TDD discipline:
 
-2) CI Matrix
-- Build and test across the supported OS/arch matrix where toolchains are available.
-- Release pipelines produce artifacts and checksums; verify signatures/checksums before publish.
+1. **Write tests first** based on spec.md acceptance criteria
+2. **Verify tests fail** before any implementation
+3. **Implement minimal code** to pass the tests
+4. **Refactor** while keeping tests green
+5. Tests MUST pass before merge
 
-3) Review Gating
-- PRs MUST assert compliance with all Core Principles in the description.
-- Any deviation requires a documented justification and follow-up task to restore compliance.
+**Test Organization**: Unit tests validate individual components, integration tests verify feature workflows, contract tests ensure API/CLI stability.
+
+**Rationale**: TDD forces clear design, prevents regression, documents behavior through tests, and ensures testability. Failing tests first proves tests actually validate the requirement.
+
+### III. Small, Independent Specs
+
+Each spec.md MUST represent:
+
+- A single feature or small subfeature
+- An independently testable unit of work
+- A deployable increment of value
+- User stories prioritized by importance (P1, P2, P3)
+
+Specs MUST NOT:
+
+- Combine multiple unrelated features
+- Create dependencies on incomplete specs
+- Describe implementation details instead of behavior
+
+**Rationale**: Small specs enable parallel work, reduce risk, accelerate feedback cycles, and allow incremental delivery. Independent specs prevent cascading failures and enable selective rollback.
+
+### IV. CI & Quality Gates
+
+All code changes MUST pass automated quality gates defined in the bootstrap spec. Required gates include:
+
+**CI Matrix**: Tests MUST run across representative platforms (e.g., macOS, Linux, Swift versions as appropriate for the project).
+
+**Test Requirements**:
+- Unit tests MUST pass (validate individual components)
+- Integration tests MUST pass (validate feature workflows)
+- Contract tests MUST pass (validate CLI/API stability)
+
+**Merge Policy**: CI MUST pass green before merge. No exceptions.
+
+**Rationale**: Automated gates prevent regressions, ensure cross-platform compatibility, maintain quality consistency, and reduce manual review burden. Representative platform coverage catches environment-specific issues early.
+
+### V. Agent Maintenance Rules
+
+The agent MUST maintain `.windsurf/rules` as a small, surgical file describing:
+
+- Agent expectations for the codebase
+- Current project structure and conventions
+- Update procedures for rules file
+
+**Mandatory Update Triggers**: The agent MUST update `.windsurf/rules` after successfully implementing any spec that introduces changes to:
+
+1. **Project dependencies** (new packages, version bumps, removals)
+2. **Directory structure or module organization** (new directories, moved components)
+3. **Architecture patterns** (new layers, communication patterns, design patterns)
+4. **CI/CD pipeline or quality gates** (new workflows, test requirements, deployment steps)
+5. **Major feature areas** (new commands, core functionality additions)
+
+**Rationale**: Living documentation prevents drift between code reality and agent expectations. Specific triggers ensure updates happen consistently without excessive maintenance burden. Surgical scope keeps rules actionable and focused.
+
+## CI & Quality Gates
+
+### Platform Coverage
+
+CI pipeline MUST test on:
+- Primary target platforms (defined in bootstrap spec)
+- Representative platform matrix (e.g., macOS latest, Ubuntu LTS)
+- Relevant language/runtime versions
+
+### Required Checks
+
+Before merge, ALL of the following MUST pass:
+- ✅ All unit tests across all platforms
+- ✅ All integration tests across all platforms
+- ✅ All contract tests (CLI interface stability)
+- ✅ Linting and formatting checks
+- ✅ Build success on all platforms
+
+### Failure Policy
+
+If any check fails:
+- Merge is BLOCKED
+- Developer MUST fix root cause
+- Re-run full CI suite
+- No bypassing checks (no force merge)
+
+## Agent Maintenance Rules
+
+### .windsurf/rules Lifecycle
+
+**Initial State**: Agent creates `.windsurf/rules` during or immediately after bootstrap spec implementation.
+
+**Maintenance**: Agent updates `.windsurf/rules` after each successful spec implementation that triggers one of the five mandatory categories (dependencies, structure, architecture, CI, major features).
+
+**Content**: Rules file MUST remain small and surgical:
+- Current dependencies and their purpose
+- Directory structure and module organization
+- Established architectural patterns
+- CI/CD pipeline overview
+- Major feature areas and their locations
+- Conventions (naming, organization, testing)
+
+**Update Procedure**: When triggered:
+1. Agent reads current `.windsurf/rules`
+2. Identifies what changed in the completed spec
+3. Updates relevant sections surgically (add/modify/remove only affected parts)
+4. Keeps file concise and actionable
+
+### Rules File Format
+
+```markdown
+# Subtree CLI - Agent Rules
+
+Last Updated: [DATE] | Spec: [###-feature-name]
+
+## Dependencies
+- [List current dependencies and purpose]
+
+## Structure
+- [Current directory organization]
+
+## Architecture
+- [Established patterns and conventions]
+
+## CI/CD
+- [Pipeline overview and quality gates]
+
+## Features
+- [Major feature areas and locations]
+
+## Conventions
+- [Naming, testing, organization rules]
+```
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-This constitution supersedes conflicting practices. Compliance is required for all changes.
+### Supremacy
 
-- Amendments: via PR with impact analysis (CLI flags, JSON schema, exit codes). Bump version per SemVer rules.
-- Breaking changes: require migration notes and clear release notes; deprecate before removal when feasible.
-- Compliance Review: reviewers verify Core Principles checkboxes in PR description; CI enforces tests and matrix builds.
-- Runtime Guidance: see `.specify/templates/plan-template.md`, `spec-template.md`, and `tasks-template.md` for process checkpoints that mirror these principles.
+This constitution supersedes all other development practices, guidelines, and conventions. In case of conflict, constitution principles take precedence.
 
-**Version**: 1.0.0 | **Ratified**: 2025-09-22 | **Last Amended**: 2025-09-22
+### Compliance
+
+- All pull requests MUST verify compliance with constitutional principles
+- Code reviews MUST check for spec-first discipline and test coverage
+- CI gates enforce test and quality requirements automatically
+- Complexity MUST be justified against constitutional simplicity principles
+
+### Amendments
+
+Constitution amendments require:
+1. Clear documentation of the proposed change
+2. Rationale for the amendment (why current principles insufficient)
+3. Migration plan for existing code/specs if needed
+4. Version bump following semantic versioning rules
+
+### Versioning Rules
+
+- **MAJOR**: Backward-incompatible governance changes, principle removals, or redefinitions
+- **MINOR**: New principles added or material expansions to existing principles
+- **PATCH**: Clarifications, wording improvements, typo fixes, non-semantic refinements
+
+### Living Document
+
+This constitution is a living document that evolves with the project. Agents and developers MUST keep it synchronized with project reality through the amendment process.
+
+**Version**: 1.0.0 | **Ratified**: 2025-10-25 | **Last Amended**: 2025-10-25
