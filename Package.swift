@@ -1,59 +1,73 @@
 // swift-tools-version: 6.1
+// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
     name: "subtree",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v13)
     ],
     products: [
-        .executable(name: "subtree", targets: ["Subtree"]),
+        // The subtree CLI executable
+        .executable(
+            name: "subtree",
+            targets: ["subtree"]
+        ),
+        // The SubtreeLib library (for testing and future programmatic use)
+        .library(
+            name: "SubtreeLib",
+            targets: ["SubtreeLib"]
+        )
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.6.1"),
+        // CLI argument parsing
+        .package(url: "https://github.com/apple/swift-argument-parser.git", exact: "1.6.2"),
+        // YAML configuration
         .package(url: "https://github.com/jpsim/Yams.git", exact: "6.1.0"),
-        .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "0.1.0"),
-        .package(url: "https://github.com/SwiftPackageIndex/SemanticVersion.git", exact: "0.5.1"),
+        // Process execution
+        .package(url: "https://github.com/swiftlang/swift-subprocess.git", exact: "0.2.1"),
+        // File system operations (pinned for Ubuntu 20.04 compatibility)
         .package(
             url: "https://github.com/apple/swift-system",
-            // Temporarily pin to 1.5.0 because 1.6.0 has a breaking change for Ubuntu Focal
-            // https://github.com/apple/swift-system/issues/237
             exact: "1.5.0"
-        ),
+        )
     ],
     targets: [
-        .executableTarget(
-            name: "Subtree",
+        // SubtreeLib: Library containing all business logic
+        .target(
+            name: "SubtreeLib",
             dependencies: [
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Yams", package: "Yams"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
-                .product(name: "SemanticVersion", package: "SemanticVersion"),
-                .product(name: "SystemPackage", package: "swift-system"),
+                .product(name: "SystemPackage", package: "swift-system")
             ]
         ),
+        
+        // subtree: Thin executable wrapper
+        .executableTarget(
+            name: "subtree",
+            dependencies: ["SubtreeLib"]
+        ),
+        
+        // SubtreeLibTests: Unit tests (uses built-in Swift Testing from Swift 6.1)
         .testTarget(
-            name: "SubtreeTests",
+            name: "SubtreeLibTests",
             dependencies: [
-                "Subtree",
-                .product(name: "Subprocess", package: "swift-subprocess"),
-                .product(name: "SystemPackage", package: "swift-system"),
-            ],
-            swiftSettings: [
-                .enableExperimentalFeature("Testing")
+                "SubtreeLib"
             ]
         ),
+        
+        // IntegrationTests: CLI end-to-end tests only (uses built-in Swift Testing from Swift 6.1)
+        // Tests the CLI binary via TestHarness without importing SubtreeLib
         .testTarget(
             name: "IntegrationTests",
             dependencies: [
-                "Subtree",
                 .product(name: "Subprocess", package: "swift-subprocess"),
                 .product(name: "SystemPackage", package: "swift-system"),
-            ],
-            swiftSettings: [
-                .enableExperimentalFeature("Testing")
+                .product(name: "Yams", package: "Yams")
             ]
-        ),
+        )
     ]
 )

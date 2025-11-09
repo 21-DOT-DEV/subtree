@@ -103,15 +103,13 @@ jobs:
         
       - name: Prepare release binaries
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          
           # Copy and rename binaries for release upload
-          cp downloaded_artifacts/subtree_macos/subtree "subtree_${VERSION}_macos"
-          cp downloaded_artifacts/subtree_linux/subtree_linux "subtree_${VERSION}_linux_x86_64"  
-          cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "subtree_${VERSION}_linux_arm64"
+          cp downloaded_artifacts/subtree_macos/subtree "subtree_macos"
+          cp downloaded_artifacts/subtree_linux/subtree_linux "subtree_linux_x86_64"  
+          cp downloaded_artifacts/subtree_linux_aarch64/subtree_linux_aarch64 "subtree_linux_arm64"
           
           # Make all binaries executable
-          chmod +x subtree_${VERSION}_*
+          chmod +x subtree_*
           
       - name: Build artifact bundle
         run: |
@@ -169,9 +167,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
-          gh release upload "${VERSION}" \
-            "subtree_${VERSION}_macos" \
-            "subtree_${VERSION}_linux_x86_64" \
-            "subtree_${VERSION}_linux_arm64" \
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "subtree_macos" \
+            "subtree_linux_x86_64" \
+            "subtree_linux_arm64" \
             "subtree.artifactbundle.zip"
