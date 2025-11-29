@@ -118,3 +118,24 @@ Agent MUST update when changes occur to:
 
 **Lines**: ~120 (well under 200-line limit)
 
+
+## Shell Configuration
+
+**Zsh Autocorrect**: Prevent zsh from prompting to correct `subtree` or `swift` commands:
+
+```bash
+# Use nocorrect prefix for commands zsh might autocorrect
+nocorrect swift test
+nocorrect swift build
+```
+
+**Agent Guidance**: When generating `run_command` calls, prefer using `nocorrect` prefix for:
+- `swift test`
+- `swift build`
+- `./.build/release/subtree`
+
+This prevents interactive prompts that block automated execution.
+
+---
+
+**Lines**: ~145 (under 200-line limit)
