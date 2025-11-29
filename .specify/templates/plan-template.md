@@ -31,7 +31,18 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Verify alignment with all six core principles:
+
+| Principle | Status | Notes |
+|-----------|--------|-------|
+| I. Spec-First & TDD | ⬜ | Spec exists, tests will be written first |
+| II. Config as Source of Truth | ⬜ | Changes driven by subtree.yaml |
+| III. Safe by Default | ⬜ | Non-destructive defaults, --force gates |
+| IV. Performance by Default | ⬜ | Within time limits (init <1s, add <10s, etc.) |
+| V. Security & Privacy | ⬜ | No shell injection, no secrets in logs |
+| VI. Open Source Excellence | ⬜ | Docs updated, KISS/DRY applied |
+
+**Legend**: ✅ Pass | ⬜ Not yet verified | ❌ Violation (requires justification)
 
 ## Project Structure
 

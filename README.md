@@ -156,17 +156,24 @@ Copy files from subtrees to your repository:
 > Extract operations respect Git's tracking status - tracked files are protected unless you use `--force`.
 
 ```bash
-# Ad-hoc file extraction
-subtree extract --name example-lib --from docs/README.md --to Docs/ExampleLib.md
+# Ad-hoc file extraction with glob patterns
+subtree extract --name example-lib --from "docs/**/*.md" --to Docs/
 
-# Extract with glob patterns
-subtree extract --name example-lib --from templates/** --to Templates/ExampleLib/
+# Multi-pattern extraction (009) - extract from multiple directories at once
+subtree extract --name mylib \
+  --from "include/**/*.h" \
+  --from "src/**/*.c" \
+  --to vendor/
 
-# Apply declared mappings from config
-subtree extract --name example-lib --all
+# With exclusions (applies to all patterns)
+subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
 
-# Extract all subtrees matching pattern
-subtree extract --all --match "**/*.md"
+# Save multi-pattern mapping for future use
+subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/ --persist
+
+# Execute saved mappings from subtree.yaml
+subtree extract --name example-lib
+subtree extract --all
 ```
 
 ### ✅ Validate Subtree State
@@ -217,13 +224,12 @@ subtree validate --with-remote
 
 - **`extract`** - Copy files from subtrees
   - `--name <name>` - Extract from specific subtree
-  - `--from <path>` - Source path/glob pattern
+  - `--from <pattern>` - Source glob pattern (repeatable for multi-pattern)
   - `--to <path>` - Destination path
-  - `--all` - Apply declared copy mappings
-  - `--match <pattern>` - Filter by glob pattern
-  - `--dry-run` - Preview without copying
-  - `--no-overwrite` - Skip existing files
-  - `--force` - Overwrite protected files
+  - `--exclude <pattern>` - Exclude pattern (repeatable)
+  - `--all` - Execute all saved mappings
+  - `--persist` - Save mapping to subtree.yaml
+  - `--force` - Overwrite git-tracked files
 
 - **`validate`** - Verify subtree integrity
   - `--name <name>` - Validate specific subtree
@@ -251,12 +257,18 @@ subtrees:
     prefix: Sources/ThirdParty/ExampleLib
     branch: main
     squash: true                         # Default: true
-    commit: 0123456789abcdef...           # Latest known commit
-    copies:                              # File extraction mappings  
-      - from: docs/README.md
-        to: Docs/ExampleLib.md
-      - from: templates/**
-        to: Templates/ExampleLib/
+    commit: 0123456789abcdef...          # Latest known commit
+    extractions:                         # File extraction mappings
+      # Single pattern (legacy format)
+      - from: "docs/**/*.md"
+        to: Docs/
+      # Multi-pattern (009) - array format
+      - from:
+          - "include/**/*.h"
+          - "src/**/*.c"
+        to: vendor/
+        exclude:
+          - "**/test/**"
 ```
 
 ## Platform Compatibility

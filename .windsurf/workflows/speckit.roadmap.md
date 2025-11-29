@@ -1,5 +1,5 @@
 ---
-description: Create or update the product roadmap from a natural language product description (user-facing features, milestones, releases)
+description: Create or update the product roadmap from a natural language product description (multi-file index + per-phase roadmap)
 auto_execution_mode: 1
 ---
 
@@ -13,13 +13,27 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
-You are creating or updating the user-facing **product roadmap** at `.specify/memory/roadmap.md`. The roadmap gives a **high-level view** of the product: feature areas, phased releases, dependencies, and success metrics. It is designed to feed directly into follow‑on Spec‑Kit flows (e.g., `/speckit.specify` for individual features). **Roadmap versioning MUST mirror the constitution style: version and dates live INSIDE the markdown document, not in a separate JSON file.**
+You are creating or updating a user-facing **product roadmap** using a **multi-file structure** to keep LLM context small but the roadmap expressive.
+
+- The **index file** lives at: `.specify/memory/roadmap.md`  
+  This is a **high-level overview** only (vision, phase summaries, product-level metrics, compact change log).
+
+- Detailed **phase files** live under: `.specify/memory/roadmap/`  
+  Each phase gets its own markdown file, e.g.:  
+  - `.specify/memory/roadmap/phase-1-foundation.md`  
+  - `.specify/memory/roadmap/phase-2-build-infra.md`  
+  - `.specify/memory/roadmap/phase-3-performance-delivery.md`  
+
+**IMPORTANT:**  
+- `roadmap.md` MUST remain **small and high-level**. It MUST NOT contain full feature specs.  
+- Phase files are the **canonical source of detail** (feature descriptions, success metrics, dependencies).
 
 Follow this execution flow:
 
-1. **Load or create the roadmap artifact**
-   - If `.specify/memory/roadmap.md` exists, load it and treat this run as an update (append and revise).
-   - If it doesn’t exist, create a new file with the structure below.
+1. **Detect existing artifacts (mode selection)**
+   - If `.specify/memory/roadmap.md` does **not** exist: treat as **initial roadmap creation**.
+   - If it exists: treat as an **incremental update**.
+   - Phase files are stored under `.specify/memory/roadmap/`. If the folder or a phase file is missing, you MAY create it when needed.
 
 2. **Gather context (if present)**
    - Read `.specify/memory/constitution.md` for principles, guardrails, and constraints that should inform prioritization.
@@ -27,68 +41,115 @@ Follow this execution flow:
    - Prefer explicit user input from `$ARGUMENTS`; otherwise infer from context and document assumptions.
 
 3. **Interpret the user request**
-   - The user’s input describes the **product vision** and any **must‑have** areas.
-   - If timing is mentioned, include it. If not, keep timing **optional** and express releases as **Phase 1, Phase 2, ...**
+   - The user’s input describes the **product vision**, desired **feature areas**, and possibly specific phases or features to add/update.
+   - If the input clearly targets a specific phase (e.g., “update Phase 2 – build infra…”), focus changes on that phase file and keep the index in sync at a summary level.
+   - If no phase is specified and no index exists, design a reasonable **phased roadmap** (Phase 1/2/3, MVP / v1 / v2, etc.).
 
-4. **Propose Roadmap Structure (auto‑generated)**
-   - **Vision & Goals** (succinct product statement, target users, primary outcomes)
-   - **Release Plan** (Phases or dated milestones; timing optional)
-   - **Feature Areas** (grouped capabilities aligned to outcomes)
-   - **Feature Backlog** (sortable list for future phases)
-   - **Dependencies & Sequencing** (what must exist before what)
-   - **Metrics & Success Criteria** (user‑facing, technology‑agnostic)
-   - **Risks & Assumptions**
-   - **Change Log** (roadmap versioning metadata)
+4. **Storage model (MUST follow this)**
+   - `.specify/memory/roadmap.md`:
+     - Vision & Goals
+     - Phases Overview (table of phases with name, status, file path)
+     - Product-Level Metrics & Success Criteria
+     - Global Risks & Assumptions (optional)
+     - Global Change Log
+   - `.specify/memory/roadmap/phase-*.md`:
+     - Phase metadata (goal, status, last updated)
+     - Detailed feature list (Name, Purpose, Metrics, Dependencies, Notes)
+     - Phase-specific dependencies & sequencing
+     - Phase-specific metrics
+     - Phase-specific risks/assumptions
+     - Optional phase-level notes/change log
 
-5. **Generate feature entries (moderate detail for each item)**
-   For each feature/milestone include exactly these fields:
-   - **Name** — concise, user‑recognizable
+5. **Generate feature entries (per phase, moderate detail)**
+   For each feature/milestone, in its **phase file** include exactly these fields:
+
+   - **Name** — concise, user-recognizable
    - **Purpose & user value** — the “why” in 1–2 sentences
-   - **Success metrics** — measurable, user‑facing outcomes (3–5 bullets)
+   - **Success metrics** — measurable, user-facing outcomes (3–5 bullets)
    - **Dependencies** — other features or prerequisites
-   - **(Optional) Notes** — constraints, policy, or rollout considerations
+   - **(Optional) Notes** — constraints, policy, rollout or implementation considerations
 
-6. **Create releases/phases**
-   - If **time granularity** was provided, render releases with dates/quarters.
-   - If **time is not provided**, render **Phase 1/2/3** (or **MVP / v1 / v2**) with a short goal statement and 3–7 features each.
-   - Ensure **each release delivers user value** end‑to‑end.
+   **DO NOT** copy full feature details into `roadmap.md`. Instead, summarize the phase in 1–3 bullets there.
 
-7. **Derive Dependencies & Sequencing**
-   - Build a simple ordering list (e.g., `Auth → Profiles → Sharing → Notifications`) and annotate any cross‑release dependencies.
-   - Keep it readable (bullets or simple table), not an engineering Gantt.
+6. **Phase creation & assignment**
+   - On **initial creation**:
+     - From the product description, derive 3–6 coherent phases (e.g., “Foundation & Discoverability”, “Performance & Delivery”, “Content & Accessibility”, “Advanced Features & Analytics”).  
+     - For each phase:
+       - Assign a numeric order (Phase 1, Phase 2, …).
+       - Generate a phase file name like:  
+         `.specify/memory/roadmap/phase-<N>-<kebab-case-short-name>.md`  
+         Example: `phase-1-foundation-discoverability.md`
+       - Populate that phase file with detailed features, dependencies, metrics, and risks for that phase.
+   - On **incremental updates**:
+     - If the user input references a **specific phase or feature**, update the corresponding phase file only.
+     - If a feature moves between phases (e.g. active → backlog), update both affected phase files and adjust the summary in `roadmap.md` accordingly.
+     - Avoid renaming phase files unless the goal changes significantly; if renamed, update the Phases Overview table in `roadmap.md`.
 
-8. **Define Metrics & Success Criteria (product‑level)**
-   - Choose 4–8 KPIs tied to user value (adoption, activation, retention, satisfaction, revenue proxy, support volume, etc.).
-   - Keep them **technology‑agnostic** and verifiable without implementation details.
+7. **Define product-level metrics & success criteria (index-level)**
+   - In `roadmap.md`, choose 4–8 **product-level KPIs** tied to user value:
+     - Activation, retention, satisfaction, conversion rate, support volume, etc.
+   - These MUST be:
+     - **User-facing**
+     - **Technology-agnostic**
+     - **Verifiable** without implementation details
+
+8. **Derive dependencies & sequencing (phase-level detail, index-level summary)**
+   - Within each phase file:
+     - Document local dependencies and sequencing (“Feature A → Feature B → Feature C”) with brief rationale.
+   - In `roadmap.md`:
+     - Provide a **high-level dependency view** only (e.g., “Phase 1 foundation before Phase 2 infra,” “Token system blocks Dark Mode,” etc.).
+     - Do NOT reproduce all detailed dependency graphs; link phases instead.
 
 9. **Seed next steps for feature iteration**
-   - For every feature, output a one‑line **follow‑on command hint** to create a spec later, e.g.:
-     ```text
-     Next: /speckit.specify "Feature: Smart Notifications — deliver timely, non‑spammy updates to increase 7‑day retention"
-     ```
+   - For each phase, select 1–5 “next up” features and produce `/speckit.specify` hints.
+   - These hints should generally appear in **console output**, not bloated into `roadmap.md`. You MAY add a small “Next Specs” list per phase if it stays concise.
 
-10. **Versioning & write output**
-    - Maintain version **inside** `.specify/memory/roadmap.md` header.
-    - If creating a new roadmap: set `Version: v1.0.0`, set `Last Updated` to today, and add a Change Log entry (“initial roadmap”). Optionally include `Initiated Date` in the header if helpful.
-    - If updating an existing roadmap: **increment version** using semantic rules aligned with the constitution:
-      - **MAJOR**: Backward‑incompatible strategy shift or phase re‑architecture (significant scope redefinition).
-      - **MINOR**: New feature area added, milestone reordered materially, or notable scope expansion.
-      - **PATCH**: Textual clarifications or minor edits that don’t change intent or sequencing.
-    - If the bump type is ambiguous, **propose reasoning** in a one‑line note under the Change Log entry.
-    - Write the full roadmap to `.specify/memory/roadmap.md` (overwrite or create). **Do not write any JSON file.**
+   Example console hints:
+   ```text
+   Next: /speckit.specify "Feature: Search Functionality — instant client-side docs search using static index"
+   Next: /speckit.specify "Feature: Utilities Library Extraction — dedicated Utilities library + CLI for sitemap tooling"
+   ```
+
+10. **Versioning & write output (index is versioned)**
+    - The roadmap version is maintained **inside** `roadmap.md` header.
+    - If creating a new roadmap index:
+      - Set `Version: v1.0.0`
+      - Set `Last Updated` to today.
+      - Add a Change Log entry (“Initial roadmap created from product description”).
+    - If updating an existing roadmap:
+      - **Increment version** using semantic rules aligned with the constitution:
+        - **MAJOR**: Backward-incompatible strategy shift or significant re-architecture of phases.
+        - **MINOR**: New phase added, new major feature area introduced, or substantial reprioritization.
+        - **PATCH**: Text clarifications, small status updates, minor adjustments that don’t change the roadmap’s intent.
+      - Append a brief Change Log entry describing what changed and why (include bump type).
+    - Write outputs:
+      - Overwrite or create `.specify/memory/roadmap.md` (index, slim).  
+      - Create or overwrite phase files under `.specify/memory/roadmap/` as needed (canonical detail).
 
 11. **Validation before final output**
-    - Roadmap contains **Vision & Goals**, **Release Plan**, **Feature Areas**, **Metrics**, **Dependencies**, **Risks/Assumptions**, **Change Log**.
-    - Each feature has **Name, Purpose, Success metrics, Dependencies** (Notes optional).
-    - Success metrics are **user‑facing** and **technology‑agnostic**.
-    - If critical unknowns remain, include up to **3** `[NEEDS CLARIFICATION: …]` markers (max three). Prioritize by impact (scope > compliance/privacy > UX > technical).
+    - `roadmap.md` MUST contain:
+      - Vision & Goals
+      - Phases Overview table
+      - Product-level Metrics & Success Criteria
+      - (Optional) Global Risks & Assumptions
+      - Change Log with semantic version bumps
+    - Each phase file MUST contain:
+      - Phase name/goal and status
+      - At least one feature with Name, Purpose, Success metrics, Dependencies
+      - Local dependencies and/or sequencing described
+      - Phase-level metrics if applicable
+    - `roadmap.md` MUST **NOT** include full feature specs (no long blocks duplicating phase file content).
+    - If critical unknowns remain, include up to **3** `[NEEDS CLARIFICATION: …]` markers across the affected documents (index + phases combined). Prioritize by impact (scope > compliance/privacy > UX > technical).
 
 12. **Report completion (console output)**
-    - Show: roadmap version change, number of releases, feature count, and a short list of the next three `/speckit.specify` hints.
+    - Show: roadmap version change, number of phases, total feature count.
+    - Show: a short list of “Next `/speckit.specify` calls” (max 5, across the highest priority phase).
 
 ---
 
-## Roadmap Document Structure (use this exact Markdown scaffold)
+## Index & Phase Document Structure (use these Markdown scaffolds)
+
+### 1. Index File: `.specify/memory/roadmap.md`
 
 ```markdown
 # Product Roadmap
@@ -101,45 +162,32 @@ Follow this execution flow:
 - Target users / personas.
 - Top 3 outcomes (business/user).
 
-## Release Plan
-> Timing is optional. Use Phase 1/2/3 if dates are not provided.
+## Phases Overview
 
-### Phase 1 — Goal: <short phrase or date/quarter>
-**Key Features**
-1. <Feature Name>  
-   - Purpose & user value: <1–2 sentences>  
-   - Success metrics:  
-     - <metric 1>  
-     - <metric 2>  
-     - <metric 3>  
-   - Dependencies: <list or “none”>  
-   - Notes: <optional>
+| Phase | Name / Goal                         | Status      | File Path                                          |
+|-------|-------------------------------------|-------------|----------------------------------------------------|
+| 1     | Foundation & Discoverability        | COMPLETE    | roadmap/phase-1-foundation-discoverability.md      |
+| 2     | Utilities Library & Build Infra     | NEXT UP     | roadmap/phase-2-utilities-build-infra.md           |
+| 3     | Performance & Delivery Optimization | PLANNED     | roadmap/phase-3-performance-delivery.md            |
+| 4     | Content & Accessibility             | PLANNED     | roadmap/phase-4-content-accessibility.md           |
+| 5     | Future Features & Analytics         | FUTURE      | roadmap/phase-5-future-features-analytics.md       |
 
-2. <Feature Name> …
+> Status suggestions: PLANNED, ACTIVE, COMPLETE, DEFERRED, FUTURE
 
-### Phase 2 — Goal: <short phrase or date/quarter>
-**Key Features**
-- …
+## Product-Level Metrics & Success Criteria
+- Activation rate reaches <X%> by <date or phase>.
+- 7-day retention improves to <Y%>.
+- NPS ≥ <Z>.
+- Support tickets per active user ≤ <T>.
+- Core Web Vitals within “Good” thresholds across all pages.
 
-### Future Phases / Backlog
-- <Backlog Feature> — Purpose, success metrics (brief), dependencies
-- …
+## High-Level Dependencies & Sequencing
+- Phase 1 (Foundation) before Phase 2 (Utilities) — infra depends on sitemap foundation.
+- Token System (Phase 3.x) blocks Dark Mode (Phase 4.x).
+- Privacy Policy must ship before Analytics migration.
+- Accessibility Audit should precede automated a11y testing in CI.
 
-## Feature Areas (capability map)
-- Area A: features that support <outcome>
-- Area B: …
-
-## Dependencies & Sequencing
-- Ordering: A → B → C (brief rationale)
-- Cross-release dependencies: <if any>
-
-## Metrics & Success Criteria (product‑level)
-- Activation rate reaches <X%>
-- 7-day retention improves to <Y%>
-- NPS ≥ <Z>
-- Support tickets per active user ≤ <T>
-
-## Risks & Assumptions
+## Global Risks & Assumptions
 - Assumptions: <bullets>
 - Risks & mitigations: <bullets>
 
@@ -150,52 +198,77 @@ Follow this execution flow:
 
 ---
 
-## General Guidelines
+### 2. Phase File: `.specify/memory/roadmap/phase-<N>-<slug>.md`
 
-### Quick Guidelines
-- Focus on **WHAT** users get and **WHY** it matters.
-- Avoid **HOW** to implement (no frameworks, APIs, code structures).
-- Each release must ship a coherent **slice of value**.
-- Keep wording accessible to non‑technical stakeholders.
-- Keep timing **optional** unless the user provided it.
+```markdown
+# Phase <N> — <Name / Goal>
 
-### Section Requirements
-- **Mandatory**: Vision & Goals, Release Plan, Feature list with metrics, Dependencies & Sequencing, Metrics (product‑level), Risks & Assumptions, Change Log.
-- **Optional**: Dates/quarters for releases, Notes per feature, Capability map if already clear.
+**Status:** PLANNED | ACTIVE | COMPLETE | DEFERRED | FUTURE  
+**Last Updated:** YYYY-MM-DD
 
-### For AI Generation
-1. **Make informed guesses** using domain norms when unspecified; document in **Assumptions**.
-2. **Limit clarifications** to max **3** markers; only when multiple reasonable interpretations with material impact exist.
-3. **Prioritize clarifications**: scope > privacy/compliance > UX > technical.
-4. **Think like a PM & tester**: every feature must have measurable user outcomes.
+## Goal
+Short description of what this phase aims to accomplish and why it matters.
 
-### Success Metrics Guidelines (user‑facing, tech‑agnostic)
-Good examples:
-- “Users can complete onboarding in under 2 minutes.”
-- “Weekly active creators ↑ 25% within one release.”
-- “Support tickets per 1k MAU ↓ 30%.”
-- “Checkout conversion improves from 18% → 25%.”
+## Key Features
 
-Avoid (implementation‑focused):
-- “API latency under 200ms.”
-- “Database handles 1k TPS.”
-- “React components render efficiently.”
+1. <Feature Name>
+   - Purpose & user value: <1–2 sentences explaining the “why”>
+   - Success metrics:
+     - <metric 1>
+     - <metric 2>
+     - <metric 3>
+   - Dependencies: <list of features, phases, or “none”>
+   - Notes: <optional details, constraints, rollout, etc.>
+
+2. <Feature Name>
+   - Purpose & user value: ...
+   - Success metrics:
+     - ...
+   - Dependencies: ...
+   - Notes: ...
+
+<!-- Add more features as needed -->
+
+## Dependencies & Sequencing
+- Local ordering: Feature A → Feature B → Feature C (with brief rationale).
+- Cross-phase dependencies: <if any>.
+
+## Phase-Specific Metrics & Success Criteria
+- This phase is successful when:
+  - <concrete, measurable outcomes tied to its features>
+
+## Risks & Assumptions
+- Assumptions: <bullets>
+- Risks & mitigations: <bullets>
+
+## Phase Notes / Change Log
+- YYYY-MM-DD: <short note about reordering, adding/removing features, or status changes>
+```
 
 ---
 
-## Write Target
-- `.specify/memory/roadmap.md` (single authoritative source; versioned inline)
+## General Guidelines
 
-## Output Summary (console)
-- `roadmap: vA.B.C → vX.Y.Z` (reason for bump)
-- `releases: <n> | features: <m>`
-- Next steps:
-  - `Next: /speckit.specify "<Feature 1: …>"`
-  - `Next: /speckit.specify "<Feature 2: …>"`
-  - `Next: /speckit.specify "<Feature 3: …>"`
+### Quick Guidelines
+- Focus on **WHAT** users get and **WHY** it matters, not **HOW** it is implemented.
+- Keep `roadmap.md` **slim** and **navigational**:
+  - Use summaries and tables, not full specs.
+- Keep phase files **focused per phase**:
+  - One phase per file, with detailed features and metrics.
+- Avoid implementation details (no frameworks, APIs, code internals) in roadmap documents.
+- Ensure every high-priority feature is attached to a phase.
 
-## IMPORTANT
-- Do **not** embed implementation details.
-- Keep metrics **verifiable without code**.
-- Respect the project constitution if present.
-- If no product description was provided in `$ARGUMENTS`, return: `ERROR "No product description provided"`.
+### Section Requirements
+
+**Index (`roadmap.md`)** – MUST include:
+- Vision & Goals
+- Phases Overview table
+- Product-level Metrics & Success Criteria
+- High-level Dependencies & Sequencing
+- Change Log
+
+**Phase files (`roadmap/phase-*.md`)** – MUST include:
+- Phase header with name, status, last updated
+- Key Features with Name, Purpose, Metrics, Dependencies
+- Phase-specific Dependencies & Sequencing
+-

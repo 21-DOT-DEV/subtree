@@ -101,7 +101,7 @@ struct ConfigFileManagerTests {
         let updatedConfig = try await ConfigFileManager.loadConfig(from: configPath)
         #expect(updatedConfig.subtrees.count == 1)
         #expect(updatedConfig.subtrees[0].extractions?.count == 1)
-        #expect(updatedConfig.subtrees[0].extractions?[0].from == "docs/**/*.md")
+        #expect(updatedConfig.subtrees[0].extractions?[0].from == ["docs/**/*.md"])
     }
     
     // T046: Test appendExtraction creates extractions array if missing
@@ -155,8 +155,8 @@ struct ConfigFileManagerTests {
         // Verify both extractions exist
         let updatedConfig = try await ConfigFileManager.loadConfig(from: configPath)
         #expect(updatedConfig.subtrees[0].extractions?.count == 2)
-        #expect(updatedConfig.subtrees[0].extractions?[0].from == "docs/**/*.md")
-        #expect(updatedConfig.subtrees[0].extractions?[1].from == "src/**/*.{h,c}")
+        #expect(updatedConfig.subtrees[0].extractions?[0].from == ["docs/**/*.md"])
+        #expect(updatedConfig.subtrees[0].extractions?[1].from == ["src/**/*.{h,c}"])
     }
     
     // T048: Test appendExtraction case-insensitive subtree lookup

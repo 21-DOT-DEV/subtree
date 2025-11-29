@@ -8,19 +8,25 @@ private func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 
-/// Extract files from a subtree using glob patterns (008-extract-command / User Story 1)
+/// Extract files from a subtree using glob patterns (008-extract-command + 009-multi-pattern)
 ///
 /// This command supports two modes:
-/// 1. Ad-hoc extraction: Extract files once using command-line patterns
+/// 1. Ad-hoc extraction: Extract files using command-line patterns (supports multiple `--from` flags)
 /// 2. Saved mappings: Extract files using saved extraction mappings from subtree.yaml
+///
+/// Multi-pattern extraction (009): Use multiple `--from` flags to extract files from several
+/// directories in a single command. Files are deduplicated by relative path.
 ///
 /// Examples:
 /// ```
 /// # Ad-hoc: Extract markdown docs from docs subtree
-/// subtree extract --name docs "**/*.md" project-docs/
+/// subtree extract --name docs --from "**/*.md" --to project-docs/
 ///
-/// # With exclusions
-/// subtree extract --name mylib "src/**/*.{c,h}" Sources/MyLib/ --exclude "**/test/**"
+/// # Multi-pattern: Extract headers AND sources in one command
+/// subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/
+///
+/// # With exclusions (applies to all patterns)
+/// subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
 /// ```
 public struct ExtractCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
@@ -35,20 +41,23 @@ public struct ExtractCommand: AsyncParsableCommand {
             
             EXAMPLES:
               # Extract markdown documentation
-              subtree extract --name docs "**/*.md" project-docs/
+              subtree extract --name docs --from "**/*.md" --to project-docs/
               
-              # Extract C source files with exclusions
-              subtree extract --name mylib "src/**/*.{c,h}" Sources/ --exclude "**/test/**"
+              # Multi-pattern: Extract headers AND sources together
+              subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/
               
-              # Save mapping for future use
-              subtree extract --name mylib "**/*.h" include/ --persist
+              # With exclusions (applies to all patterns)
+              subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
+              
+              # Save multi-pattern mapping for future use
+              subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/ --persist
               
               # Execute saved mappings
               subtree extract --name mylib
               subtree extract --all
               
               # Override git-tracked file protection
-              subtree extract --name lib "*.md" docs/ --force
+              subtree extract --name lib --from "*.md" --to docs/ --force
             
             GLOB PATTERNS:
               *       Match any characters except /
@@ -73,13 +82,13 @@ public struct ExtractCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Execute saved extraction mappings for all subtrees")
     var all: Bool = false
     
-    // T064: Source pattern positional argument (optional for bulk mode)
-    @Argument(help: "Glob pattern to match files in the subtree (e.g., '**/*.md', 'src/**/*.c')")
-    var pattern: String?
+    // T022: Source pattern option (repeatable for multi-pattern extraction)
+    @Option(name: .long, help: "Glob pattern to match files (can be repeated for multi-pattern extraction)")
+    var from: [String] = []
     
-    // T065: Destination positional argument (optional for bulk mode)
-    @Argument(help: "Destination path relative to repository root (e.g., 'docs/', 'Sources/MyLib/')")
-    var destination: String?
+    // T022: Destination option
+    @Option(name: .long, help: "Destination path relative to repository root (e.g., 'docs/', 'Sources/MyLib/')")
+    var to: String?
     
     // T066: --exclude repeatable flag for exclusion patterns
     @Option(name: .long, help: "Glob pattern to exclude files (can be repeated)")
@@ -96,10 +105,10 @@ public struct ExtractCommand: AsyncParsableCommand {
     public init() {}
     
     public func run() async throws {
-        // T111: Mode selection based on positional arguments
-        let hasPositionalArgs = pattern != nil && destination != nil
+        // T111: Mode selection based on --from/--to options
+        let hasAdHocArgs = !from.isEmpty && to != nil
         
-        if hasPositionalArgs {
+        if hasAdHocArgs {
             // AD-HOC MODE: Extract specific pattern
             if all {
                 writeStderr("❌ Error: --all flag cannot be used with pattern/destination arguments\n")
@@ -116,8 +125,8 @@ public struct ExtractCommand: AsyncParsableCommand {
             try await runAdHocExtraction(subtreeName: subtreeName)
         } else {
             // BULK MODE: Execute saved mappings
-            if pattern != nil || destination != nil {
-                writeStderr("❌ Error: Pattern and destination must both be provided or both omitted\n")
+            if !from.isEmpty || to != nil {
+                writeStderr("❌ Error: --from and --to must both be provided or both omitted\n")
                 Foundation.exit(1)
             }
             
@@ -135,8 +144,8 @@ public struct ExtractCommand: AsyncParsableCommand {
     // MARK: - Ad-Hoc Extraction Mode
     
     private func runAdHocExtraction(subtreeName: String) async throws {
-        guard let patternValue = pattern, let destinationValue = destination else {
-            writeStderr("❌ Internal error: Missing pattern or destination in ad-hoc mode\n")
+        guard let destinationValue = to else {
+            writeStderr("❌ Internal error: Missing --to in ad-hoc mode\n")
             Foundation.exit(2)
         }
         
@@ -150,22 +159,50 @@ public struct ExtractCommand: AsyncParsableCommand {
         // T069: Destination path validation
         let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
         
-        // T070: Glob pattern matching using GlobMatcher
-        let matchedFiles = try await findMatchingFiles(
-            in: subtree.prefix,
-            pattern: patternValue,
-            excludePatterns: exclude,
-            gitRoot: gitRoot
-        )
+        // T023-T025 + T040: Multi-pattern matching with deduplication and per-pattern tracking
+        // Process all --from patterns and collect unique files
+        var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
+        var seenPaths = Set<String>()  // T024: Deduplicate by relative path
+        var patternMatchCounts: [(pattern: String, count: Int)] = []  // T040: Per-pattern tracking
         
-        // T150: Zero-match validation (ad-hoc mode = error)
-        guard !matchedFiles.isEmpty else {
-            writeStderr("❌ Error: No files matched pattern '\(patternValue)' in subtree '\(subtreeName)'\n\n")
+        for pattern in from {
+            let matchedFiles = try await findMatchingFiles(
+                in: subtree.prefix,
+                pattern: pattern,
+                excludePatterns: exclude,
+                gitRoot: gitRoot
+            )
+            
+            // T040: Track match count for this pattern
+            var patternUniqueCount = 0
+            
+            // T024: Add files not already seen (deduplication)
+            for file in matchedFiles {
+                if !seenPaths.contains(file.relativePath) {
+                    seenPaths.insert(file.relativePath)
+                    allMatchedFiles.append(file)
+                    patternUniqueCount += 1
+                }
+            }
+            
+            patternMatchCounts.append((pattern: pattern, count: patternUniqueCount))
+        }
+        
+        // T150 + T042: Zero-match validation (ad-hoc mode = error only if ALL patterns match nothing)
+        guard !allMatchedFiles.isEmpty else {
+            let patternsDesc = from.joined(separator: "', '")
+            writeStderr("❌ Error: No files matched pattern(s) '\(patternsDesc)' in subtree '\(subtreeName)'\n\n")
             writeStderr("Suggestions:\n")
             writeStderr("  • Check pattern syntax\n")
             writeStderr("  • Verify files exist in \(subtree.prefix)/\n")
             writeStderr("  • Try a broader pattern like '**/*'\n")
             Foundation.exit(1)  // User error
+        }
+        
+        // T041: Display warnings for zero-match patterns (when some patterns do match)
+        let zeroMatchPatterns = patternMatchCounts.filter { $0.count == 0 }
+        for zeroMatch in zeroMatchPatterns {
+            print("⚠️  Pattern '\(zeroMatch.pattern)' matched 0 files")
         }
         
         // T074: Destination directory creation
@@ -175,7 +212,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         // T132-T133: Check for git-tracked files before copying (unless --force)
         if !force {
             let trackedFiles = try await checkForTrackedFiles(
-                matchedFiles: matchedFiles,
+                matchedFiles: allMatchedFiles,
                 fullDestPath: fullDestPath,
                 gitRoot: gitRoot
             )
@@ -189,7 +226,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         // T072: File copying with FileManager
         // T073: Directory structure preservation
         var copiedCount = 0
-        for (sourcePath, relativePath) in matchedFiles {
+        for (sourcePath, relativePath) in allMatchedFiles {
             let destFilePath = fullDestPath + "/" + relativePath
             try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
             copiedCount += 1
@@ -199,7 +236,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         var mappingSaved = false
         if persist {
             mappingSaved = try await saveMappingToConfig(
-                pattern: patternValue,
+                patterns: from,
                 destination: destinationValue,  // Use original destination to preserve user's formatting
                 excludePatterns: exclude,
                 subtreeName: subtreeName,
@@ -276,10 +313,10 @@ public struct ExtractCommand: AsyncParsableCommand {
                         mappingNum: mappingNum,
                         totalMappings: mappings.count
                     )
-                    print("  ✅ [\(mappingNum)/\(mappings.count)] \(mapping.from) → \(mapping.to) (\(count) file\(count == 1 ? "" : "s"))")
+                    print("  ✅ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (\(count) file\(count == 1 ? "" : "s"))")
                     successfulMappings += 1
                 } catch let error as GlobMatcherError {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from) → \(mapping.to) (invalid pattern)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (invalid pattern)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -287,7 +324,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                         exitCode: 1  // User error
                     ))
                 } catch let error as LocalizedError where error.errorDescription?.contains("git-tracked") == true {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from) → \(mapping.to) (blocked: git-tracked files)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (blocked: git-tracked files)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -295,7 +332,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                         exitCode: 2  // System error (overwrite protection)
                     ))
                 } catch {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from) → \(mapping.to) (failed)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (failed)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -334,15 +371,28 @@ public struct ExtractCommand: AsyncParsableCommand {
         // Validate destination
         let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
         
-        // Find matching files
-        let matchedFiles = try await findMatchingFiles(
-            in: subtree.prefix,
-            pattern: mapping.from,
-            excludePatterns: mapping.exclude ?? [],
-            gitRoot: gitRoot
-        )
+        // T026: Find matching files from ALL patterns (multi-pattern support)
+        var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
+        var seenPaths = Set<String>()  // Deduplicate by relative path
         
-        guard !matchedFiles.isEmpty else {
+        for pattern in mapping.from {
+            let matchedFiles = try await findMatchingFiles(
+                in: subtree.prefix,
+                pattern: pattern,
+                excludePatterns: mapping.exclude ?? [],
+                gitRoot: gitRoot
+            )
+            
+            // Add files not already seen (deduplication)
+            for file in matchedFiles {
+                if !seenPaths.contains(file.relativePath) {
+                    seenPaths.insert(file.relativePath)
+                    allMatchedFiles.append(file)
+                }
+            }
+        }
+        
+        guard !allMatchedFiles.isEmpty else {
             return 0  // No files matched, but not an error
         }
         
@@ -354,7 +404,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         // In bulk mode, this will be caught as an error for this specific mapping
         if !force {
             let trackedFiles = try await checkForTrackedFiles(
-                matchedFiles: matchedFiles,
+                matchedFiles: allMatchedFiles,
                 fullDestPath: fullDestPath,
                 gitRoot: gitRoot
             )
@@ -373,7 +423,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         // Copy files
         var copiedCount = 0
-        for (sourcePath, relativePath) in matchedFiles {
+        for (sourcePath, relativePath) in allMatchedFiles {
             let destFilePath = fullDestPath + "/" + relativePath
             try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
             copiedCount += 1
@@ -581,12 +631,9 @@ public struct ExtractCommand: AsyncParsableCommand {
                     // T071: Check exclusion patterns
                     let excluded = excludeMatchers.contains { $0.matches(relativePath) }
                     if !excluded {
-                        // Strip the pattern prefix to get the destination relative path
-                        var destRelativePath = relativePath
-                        if !patternPrefix.isEmpty && destRelativePath.hasPrefix(patternPrefix) {
-                            destRelativePath = String(destRelativePath.dropFirst(patternPrefix.count))
-                        }
-                        results.append((itemPath, destRelativePath))
+                        // Preserve full relative path (industry standard behavior)
+                        // Future: --flatten flag could strip pattern prefix
+                        results.append((itemPath, relativePath))
                     }
                 }
             }
@@ -647,7 +694,7 @@ public struct ExtractCommand: AsyncParsableCommand {
     /// Save extraction mapping to config if not duplicate
     ///
     /// - Parameters:
-    ///   - pattern: Glob pattern (from field)
+    ///   - patterns: Array of glob patterns (from field)
     ///   - destination: Destination path (to field)
     ///   - excludePatterns: Exclusion patterns (exclude field)
     ///   - subtreeName: Name of subtree to save mapping to
@@ -655,18 +702,28 @@ public struct ExtractCommand: AsyncParsableCommand {
     /// - Returns: true if mapping was saved, false if duplicate detected
     /// - Throws: I/O errors or config errors
     private func saveMappingToConfig(
-        pattern: String,
+        patterns: [String],
         destination: String,
         excludePatterns: [String],
         subtreeName: String,
         configPath: String
     ) async throws -> Bool {
         // T093: Construct ExtractionMapping from CLI flags
-        let mapping = ExtractionMapping(
-            from: pattern,
-            to: destination,
-            exclude: excludePatterns.isEmpty ? nil : excludePatterns
-        )
+        // Use single-pattern init for single pattern, multi-pattern for multiple
+        let mapping: ExtractionMapping
+        if patterns.count == 1 {
+            mapping = ExtractionMapping(
+                from: patterns[0],
+                to: destination,
+                exclude: excludePatterns.isEmpty ? nil : excludePatterns
+            )
+        } else {
+            mapping = ExtractionMapping(
+                fromPatterns: patterns,
+                to: destination,
+                exclude: excludePatterns.isEmpty ? nil : excludePatterns
+            )
+        }
         
         // Check for duplicate mapping
         let config = try await ConfigFileManager.loadConfig(from: configPath)

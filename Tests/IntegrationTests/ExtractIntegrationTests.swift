@@ -32,7 +32,7 @@ struct ExtractIntegrationTests {
         if let extractions = extractions, !extractions.isEmpty {
             yaml += "\n    extractions:"
             for extraction in extractions {
-                yaml += "\n      - from: \(extraction.from)"
+                yaml += "\n      - from: \"\(extraction.from)\""
                 yaml += "\n        to: \(extraction.to)"
                 if let exclude = extraction.exclude, !exclude.isEmpty {
                     yaml += "\n        exclude:"
@@ -63,7 +63,7 @@ struct ExtractIntegrationTests {
             if let extractions = subtree.extractions, !extractions.isEmpty {
                 yaml += "    extractions:\n"
                 for extraction in extractions {
-                    yaml += "      - from: \(extraction.from)\n"
+                    yaml += "      - from: \"\(extraction.from)\"\n"
                     yaml += "        to: \(extraction.to)\n"
                     if let exclude = extraction.exclude, !exclude.isEmpty {
                         yaml += "        exclude:\n"
@@ -123,7 +123,7 @@ struct ExtractIntegrationTests {
         
         // Extract markdown files to project-docs/
         let result = try await harness.run(
-            arguments: ["extract", "--name", "docs-lib", "**/*.md", "project-docs/"],
+            arguments: ["extract", "--name", "docs-lib", "--from", "**/*.md", "--to", "project-docs/"],
             workingDirectory: fixture.path
         )
         
@@ -183,22 +183,22 @@ struct ExtractIntegrationTests {
         
         // Extract src/**/*.c to Sources/MyLib/
         let result = try await harness.run(
-            arguments: ["extract", "--name", "mylib", "src/**/*.c", "Sources/MyLib/"],
+            arguments: ["extract", "--name", "mylib", "--from", "src/**/*.c", "--to", "Sources/MyLib/"],
             workingDirectory: fixture.path
         )
         
         #expect(result.exitCode == 0)
         
-        // Verify structure is preserved relative to src/
+        // Verify full path structure is preserved (src/ included)
         let expectedFiles = [
-            "Sources/MyLib/core/engine.c",
-            "Sources/MyLib/core/utils.c",
-            "Sources/MyLib/ui/window.c"
+            "Sources/MyLib/src/core/engine.c",
+            "Sources/MyLib/src/core/utils.c",
+            "Sources/MyLib/src/ui/window.c"
         ]
         
         for file in expectedFiles {
             #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/" + file),
-                   "Should preserve directory structure: \(file)")
+                   "Should preserve full directory structure: \(file)")
         }
         
         // Verify include/ was not copied
@@ -244,7 +244,7 @@ struct ExtractIntegrationTests {
         
         // Extract all files
         let result = try await harness.run(
-            arguments: ["extract", "--name", "assets", "**/*.*", "public/"],
+            arguments: ["extract", "--name", "assets", "--from", "**/*.*", "--to", "public/"],
             workingDirectory: fixture.path
         )
         
@@ -304,7 +304,7 @@ struct ExtractIntegrationTests {
         let result = try await harness.run(
             arguments: [
                 "extract", "--name", "codebase",
-                "src/**/*.c", "Sources/",
+                "--from", "src/**/*.c", "--to", "Sources/",
                 "--exclude", "src/**/test*/**",
                 "--exclude", "src/**/bench*/**"
             ],
@@ -313,14 +313,14 @@ struct ExtractIntegrationTests {
         
         #expect(result.exitCode == 0)
         
-        // Verify only main sources copied
-        #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/main.c"))
-        #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/util.c"))
+        // Verify only main sources copied (full path preserved: src/ included)
+        #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/src/main.c"))
+        #expect(FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/src/util.c"))
         
         // Verify test and bench excluded
-        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/test"),
+        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/src/test"),
                "Test directory should be excluded")
-        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/bench"),
+        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/Sources/src/bench"),
                "Bench directory should be excluded")
     }
     
@@ -357,7 +357,7 @@ struct ExtractIntegrationTests {
         
         // Extract to deep nested path
         let result = try await harness.run(
-            arguments: ["extract", "--name", "data", "*.json", "deep/nested/config/"],
+            arguments: ["extract", "--name", "data", "--from", "*.json", "--to", "deep/nested/config/"],
             workingDirectory: fixture.path
         )
         
@@ -409,7 +409,7 @@ struct ExtractIntegrationTests {
         
         // Extract with --persist
         let result = try await harness.run(
-            arguments: ["extract", "--name", "docs", "**/*.md", "project-docs/", "--persist"],
+            arguments: ["extract", "--name", "docs", "--from", "**/*.md", "--to", "project-docs/", "--persist"],
             workingDirectory: fixture.path
         )
         
@@ -460,7 +460,7 @@ struct ExtractIntegrationTests {
         
         // Extract with --persist and --exclude
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "src/**/*.c", "Sources/",
+            arguments: ["extract", "--name", "lib", "--from", "src/**/*.c", "--to", "Sources/",
                        "--exclude", "**/test/**", "--exclude", "**/bench/**", "--persist"],
             workingDirectory: fixture.path
         )
@@ -510,7 +510,7 @@ struct ExtractIntegrationTests {
         
         // Extract WITHOUT --persist
         let result = try await harness.run(
-            arguments: ["extract", "--name", "data", "**/*.txt", "output/"],
+            arguments: ["extract", "--name", "data", "--from", "**/*.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -561,14 +561,14 @@ struct ExtractIntegrationTests {
         
         // First extraction: markdown files
         let result1 = try await harness.run(
-            arguments: ["extract", "--name", "multi", "**/*.md", "docs/", "--persist"],
+            arguments: ["extract", "--name", "multi", "--from", "**/*.md", "--to", "docs/", "--persist"],
             workingDirectory: fixture.path
         )
         #expect(result1.exitCode == 0)
         
         // Second extraction: C files
         let result2 = try await harness.run(
-            arguments: ["extract", "--name", "multi", "**/*.c", "Sources/", "--persist"],
+            arguments: ["extract", "--name", "multi", "--from", "**/*.c", "--to", "Sources/", "--persist"],
             workingDirectory: fixture.path
         )
         #expect(result2.exitCode == 0)
@@ -819,7 +819,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract with non-matching pattern (ad-hoc mode)
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.xyz", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.xyz", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -859,7 +859,7 @@ struct ExtractIntegrationTests {
         
         // Extract with pattern that matches but exclude everything
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.md", "output/", "--exclude", "README.md"],
+            arguments: ["extract", "--name", "lib", "--from", "*.md", "--to", "output/", "--exclude", "README.md"],
             workingDirectory: fixture.path
         )
         
@@ -889,7 +889,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract from non-existent subtree
         let result = try await harness.run(
-            arguments: ["extract", "--name", "nonexistent", "*.md", "output/"],
+            arguments: ["extract", "--name", "nonexistent", "--from", "*.md", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -929,7 +929,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract with unsafe destination
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "../unsafe/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "../unsafe/"],
             workingDirectory: fixture.path
         )
         
@@ -960,7 +960,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1000,7 +1000,7 @@ struct ExtractIntegrationTests {
         
         // Extract to non-existent nested directory
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "deeply/nested/output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "deeply/nested/output/"],
             workingDirectory: fixture.path
         )
         
@@ -1200,7 +1200,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract - should be blocked
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "file.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "file.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1254,7 +1254,7 @@ struct ExtractIntegrationTests {
         
         // Extract should succeed (untracked files can be overwritten)
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "file.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "file.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1306,7 +1306,7 @@ struct ExtractIntegrationTests {
         
         // Extract with --force should succeed
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "file.txt", "output/", "--force"],
+            arguments: ["extract", "--name", "lib", "--from", "file.txt", "--to", "output/", "--force"],
             workingDirectory: fixture.path
         )
         
@@ -1366,7 +1366,7 @@ struct ExtractIntegrationTests {
         
         // Extract should fail due to tracked files
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1437,7 +1437,7 @@ struct ExtractIntegrationTests {
         
         // Extract should fail and list all protected files
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1484,7 +1484,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract INTO the subtree prefix (circular/overlap)
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "vendor/lib/extracted/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "vendor/lib/extracted/"],
             workingDirectory: fixture.path
         )
         
@@ -1541,7 +1541,7 @@ struct ExtractIntegrationTests {
         
         // Extract with pattern that would match files outside if not scoped
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "**/*.md", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "**/*.md", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1597,7 +1597,7 @@ struct ExtractIntegrationTests {
         
         // Extract with pattern preserving directory structure (no collision)
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "**/file.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "**/file.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         
@@ -1657,7 +1657,7 @@ struct ExtractIntegrationTests {
         
         // Try to extract to path that exists as a file
         let result = try await harness.run(
-            arguments: ["extract", "--name", "lib", "*.txt", "output/"],
+            arguments: ["extract", "--name", "lib", "--from", "*.txt", "--to", "output/"],
             workingDirectory: fixture.path
         )
         

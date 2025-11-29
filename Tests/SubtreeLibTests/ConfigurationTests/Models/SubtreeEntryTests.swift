@@ -99,7 +99,7 @@ struct SubtreeEntryTests {
         let entry = try decoder.decode(SubtreeEntry.self, from: yaml)
         
         #expect(entry.extractions?.count == 1)
-        #expect(entry.extractions?[0].from == "docs/**/*.md")
+        #expect(entry.extractions?[0].from == ["docs/**/*.md"])
         #expect(entry.extractions?[0].to == "project-docs/")
     }
     
@@ -160,10 +160,10 @@ struct SubtreeEntryTests {
         let entry = try decoder.decode(SubtreeEntry.self, from: yaml)
         
         #expect(entry.extractions?.count == 2)
-        #expect(entry.extractions?[0].from == "src/**/*.{h,c}")
+        #expect(entry.extractions?[0].from == ["src/**/*.{h,c}"])
         #expect(entry.extractions?[0].to == "Sources/libsecp256k1/src/")
         #expect(entry.extractions?[0].exclude?.count == 2)
-        #expect(entry.extractions?[1].from == "include/**/*.h")
+        #expect(entry.extractions?[1].from == ["include/**/*.h"])
         #expect(entry.extractions?[1].to == "Sources/libsecp256k1/include/")
     }
 }

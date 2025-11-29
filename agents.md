@@ -1,12 +1,12 @@
 # AI Agent Guide: Subtree CLI
 
-**Last Updated**: 2025-11-01 | **Phase**: 008-extract-command (Complete) | **Status**: Production-ready with Extract command
+**Last Updated**: 2025-11-28 | **Phase**: 009-multi-pattern-extraction (Complete) | **Status**: Production-ready with Multi-Pattern Extraction
 
 ## What This Project Is
 
 A Swift 6.1 command-line tool for managing git subtrees with declarative YAML configuration. Think "git submodule" but with subtrees, plus automatic config tracking and file extraction.
 
-**Current Reality**: Init + Add + Remove + Update + Extract commands complete - Production-ready with 411 passing tests.
+**Current Reality**: Init + Add + Remove + Update + Extract commands complete - Production-ready with 439 passing tests.
 
 ## Current State (5 Commands Complete)
 
@@ -20,7 +20,7 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 - **Extract command** (PRODUCTION-READY - extract files with glob patterns, persistent mappings, bulk execution)
 - **1 stub command** (validate - prints "not yet implemented")
 - **Full CLI** (`subtree --help`, all command help screens work perfectly)
-- **Test suite** (411/411 tests pass: comprehensive integration + unit tests)
+- **Test suite** (439/439 tests pass: comprehensive integration + unit tests)
 - **Git test fixtures** (GitRepositoryFixture with UUID-based temp directories, async)
 - **Git verification helpers** (TestHarness for CLI execution, git state validation)
 - **Test infrastructure** (TestHarness with swift-subprocess, async/await, black-box testing)
@@ -82,8 +82,9 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 ### ✅ Extract Command Features (Complete - 5 User Stories)
 **US1 - Ad-Hoc Extraction**:
 - Flexible glob patterns (*, **, ?, [abc], {a,b})
+- Multiple `--from` patterns (union extraction with deduplication)
 - Exclude patterns with --exclude flag
-- Directory structure preservation with smart prefix stripping
+- Full relative path preservation (industry standard)
 - Pattern-based file matching using GlobMatcher
 
 **US2 - Persistent Mappings**:
@@ -108,6 +109,7 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 
 **US5 - Validation & Error Handling**:
 - Mode-dependent zero-match handling (error in ad-hoc, warning in bulk)
+- Per-pattern match tracking with warnings for zero-match patterns
 - Clear error messages with actionable suggestions
 - Emoji prefixes for all output (❌/✅/ℹ️/📊/📝/⚠️)
 - Appropriate exit codes (0=success, 1=user error, 2=system error, 3=config error)
@@ -142,19 +144,19 @@ This project follows **strict constitutional governance**. Every feature:
 
 ### For Understanding the Project
 - **README.md**: Human-readable project overview, current phase status
-- **specs/008-extract-command/spec.md**: Extract Command requirements (latest feature)
+- **specs/009-multi-pattern-extraction/spec.md**: Multi-Pattern Extraction requirements (latest feature)
 - **specs/008-extract-command/plan.md**: Technical approach and architecture decisions
 - **.specify/memory/constitution.md**: Governance principles (NON-NEGOTIABLE)
 
 ### For Implementation Guidance
-- **specs/008-extract-command/tasks.md**: Step-by-step task list (163+ tasks complete)
+- **specs/009-multi-pattern-extraction/tasks.md**: Step-by-step task list (48 tasks complete)
 - **specs/008-extract-command/contracts/**: Command contracts and test standards
 - **specs/008-extract-command/data-model.md**: Configuration models (ExtractionMapping)
 - **.windsurf/rules/**: Windsurf-specific patterns (architecture, ci-cd, compliance)
 
 ### For Validation
 - **specs/008-extract-command/checklists/requirements.md**: Spec quality validation
-- **Test suite**: 411 tests covering all commands and features
+- **Test suite**: 439 tests covering all commands and features
 
 ## Tech Stack
 
@@ -215,21 +217,21 @@ This project follows **strict constitutional governance**. Every feature:
 - **Update Command (006)**: Case-insensitive updates ✅
 - **Case-Insensitive Names (007)**: Validation across all commands ✅
 - **Extract Command (008)**: All 5 user stories complete ✅
-  - Phase 1-3: US1 - Ad-Hoc Extraction ✅
-  - Phase 4: US2 - Persistent Mappings ✅
-  - Phase 5: US3 - Bulk Execution ✅
-  - Phase 6: US4 - Overwrite Protection ✅
-  - Phase 7: US5 - Validation & Errors ✅
-  - Phase 8: Polish & Integration ✅
+- **Multi-Pattern Extraction (009)**: All 5 user stories complete ✅
+  - Phase 1-2: Data model (ExtractionMapping array support) ✅
+  - Phase 3: Multiple --from CLI patterns ✅
+  - Phase 4: Persist + Excludes ✅
+  - Phase 5: Zero-match warnings ✅
+  - Phase 6: Polish & documentation ✅
 
 **Keep synchronized with**:
 - README.md (status, build instructions, usage examples)
 - .windsurf/rules/ (architecture, ci-cd, compliance patterns)
-- specs/008-extract-command/tasks.md (task completion status)
+- specs/009-multi-pattern-extraction/tasks.md (task completion status)
 
 ---
 
 **For Humans**: See README.md  
 **For Windsurf**: See .windsurf/rules/ (architecture, ci-cd, compliance)  
 **For Governance**: See .specify/memory/constitution.md  
-**For Requirements**: See specs/008-extract-command/spec.md (latest feature)
+**For Requirements**: See specs/009-multi-pattern-extraction/spec.md (latest feature)
