@@ -209,4 +209,36 @@ public enum GitOperations {
             throw GitError.commandFailed("git rm failed: \(result.stderr)")
         }
     }
+    
+    // T011: Compute SHA hash of file contents using git hash-object
+    /// Compute the git blob SHA hash of a file's contents
+    ///
+    /// Uses `git hash-object -t blob <file>` to compute the SHA-1 hash
+    /// that git would use for this file's contents. This is used for
+    /// checksum validation in Extract Clean Mode.
+    ///
+    /// - Parameter file: Absolute path to the file
+    /// - Returns: 40-character hex SHA-1 hash string
+    /// - Throws: `GitError.commandFailed` if file doesn't exist or git command fails
+    public static func hashObject(file: String) async throws -> String {
+        let result = try await Subprocess.run(
+            .name("git"),
+            arguments: .init(["hash-object", "-t", "blob", file]),
+            output: .string(limit: 4096),
+            error: .string(limit: 4096)
+        )
+        
+        guard case .exited(0) = result.terminationStatus else {
+            let stderr = result.standardError ?? ""
+            throw GitError.commandFailed("git hash-object failed: \(stderr)")
+        }
+        
+        let hash = (result.standardOutput ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard hash.count == 40, hash.allSatisfy({ $0.isHexDigit }) else {
+            throw GitError.commandFailed("Invalid hash returned: \(hash)")
+        }
+        
+        return hash
+    }
 }

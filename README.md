@@ -176,6 +176,24 @@ subtree extract --name example-lib
 subtree extract --all
 ```
 
+### 🧹 Clean Extracted Files
+
+Remove previously extracted files with checksum validation:
+
+```bash
+# Clean specific files (validates checksums before deletion)
+subtree extract --clean --name mylib --from "src/**/*.c" --to Sources/
+
+# Clean all saved mappings for a subtree
+subtree extract --clean --name mylib
+
+# Clean all mappings for all subtrees
+subtree extract --clean --all
+
+# Force clean modified files (skips checksum validation)
+subtree extract --clean --force --name mylib --from "*.c" --to Sources/
+```
+
 ### ✅ Validate Subtree State
 
 Verify subtree integrity and synchronization:
@@ -222,14 +240,15 @@ subtree validate --with-remote
 - **`remove`** - Remove configured subtrees
   - `--name <name>` - Remove specific subtree
 
-- **`extract`** - Copy files from subtrees
+- **`extract`** - Copy or clean files from subtrees
   - `--name <name>` - Extract from specific subtree
   - `--from <pattern>` - Source glob pattern (repeatable for multi-pattern)
   - `--to <path>` - Destination path
   - `--exclude <pattern>` - Exclude pattern (repeatable)
   - `--all` - Execute all saved mappings
   - `--persist` - Save mapping to subtree.yaml
-  - `--force` - Overwrite git-tracked files
+  - `--force` - Overwrite git-tracked files / force delete modified files
+  - `--clean` - Remove extracted files (validates checksums first)
 
 - **`validate`** - Verify subtree integrity
   - `--name <name>` - Validate specific subtree

@@ -60,11 +60,12 @@ Post-1.0 enhancements for advanced workflows, improved onboarding, and enterpris
 
 ### 7. Extract Dry-Run Mode (`--dry-run` flag)
 
-- **Purpose & user value**: Preview extraction results without actually copying files
+- **Purpose & user value**: Preview extraction or clean results without modifying filesystem
 - **Success metrics**:
-  - Users can verify extraction plan (files matched, conflicts detected) without modifying filesystem
-- **Dependencies**: Extract Command
-- **Notes**: Shows file list with status indicators, conflict warnings, summary statistics
+  - Users can verify extraction plan (files matched, conflicts detected) without copying files
+  - Users can preview clean operation (files to delete, checksum status) without removing files
+- **Dependencies**: Extract Command, Extract Clean Mode
+- **Notes**: Shows file list with status indicators, conflict warnings, summary statistics. For clean mode, shows checksum validation results and would-be-deleted files
 
 ### 8. Extract Auto-Stage Mode (`--stage` flag)
 

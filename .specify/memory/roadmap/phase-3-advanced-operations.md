@@ -1,7 +1,7 @@
 # Phase 3 — Advanced Operations & Safety
 
 **Status:** ACTIVE  
-**Last Updated:** 2025-11-27
+**Last Updated:** 2025-11-29
 
 ## Goal
 
@@ -31,7 +31,7 @@ Enable portable configuration validation, selective file extraction with compreh
 - **Notes**: Supports ad-hoc (`--from/--to`) and bulk (`--all`) modes, `--persist` for saving mappings, `--force` for overrides, directory structure preserved
 - **Delivered**: All 5 user stories (ad-hoc extraction, persistent mappings, bulk execution, overwrite protection, validation & errors), 411 tests passing
 
-### 3. Multi-Pattern Extraction ⏳ NEXT
+### 3. Multi-Pattern Extraction ✅ COMPLETE
 
 - **Purpose & user value**: Allows specifying multiple glob patterns in a single extraction, enabling users to gather files from multiple source directories (e.g., both `include/` and `src/`) into one destination without running multiple commands
 - **Success metrics**:
@@ -44,8 +44,11 @@ Enable portable configuration validation, selective file extraction with compreh
   - CLI: Repeated `--from` flags (native swift-argument-parser support)
   - YAML: Both `from: "pattern"` and `from: ["pattern1", "pattern2"]` supported
   - Excludes are global (apply to all patterns)
+  - Zero-match warnings for patterns that don't match any files
+  - Full relative path preservation (industry standard)
+- **Delivered**: All 5 user stories (multiple CLI patterns, backward-compatible YAML, persist arrays, global excludes, zero-match warnings), 439 tests passing
 
-### 4. Extract Clean Mode ⏳ PLANNED
+### 4. Extract Clean Mode ✅ COMPLETE
 
 - **Purpose & user value**: Removes previously extracted files from destination based on source glob patterns, enabling users to clean up extracted files when no longer needed or before re-extraction with different patterns
 - **Success metrics**:
@@ -58,8 +61,10 @@ Enable portable configuration validation, selective file extraction with compreh
   - `--clean` flag triggers removal mode (opposite of extraction)
   - Pattern matches files in source (subtree) directory
   - Corresponding files removed from destination directory
-  - Checksum validation prevents accidental deletion of modified files
-  - Bulk mode: `extract --clean --name foo` cleans all persisted mappings
+  - Checksum validation via `git hash-object` prevents accidental deletion of modified files
+  - Bulk mode: `extract --clean --name foo` or `--clean --all` for all subtrees
+  - Continue-on-error for bulk operations with failure summary
+- **Delivered**: All 5 user stories (ad-hoc clean, force override, bulk clean, multi-pattern, error handling), 477 tests passing
 
 ### 5. Lint Command ⏳ PLANNED
 
@@ -77,10 +82,10 @@ Enable portable configuration validation, selective file extraction with compreh
 - **Local ordering**: 
   1. Case-Insensitive Names ✅
   2. Extract Command ✅
-  3. Multi-Pattern Extraction ⏳ (next)
-  4. Extract Clean Mode ⏳ (after multi-pattern, leverages array patterns)
+  3. Multi-Pattern Extraction ✅
+  4. Extract Clean Mode ✅
   5. Lint Command ⏳ (final Phase 3 feature)
-- **Rationale**: Multi-pattern extraction is simpler and immediately useful; Clean mode benefits from multi-pattern support; Lint validates all previous operations
+- **Rationale**: Lint command validates all previous operations and completes Phase 3
 - **Cross-phase dependencies**: Requires Phase 2 Add Command for subtrees to exist
 
 ## Phase-Specific Metrics & Success Criteria
@@ -89,7 +94,7 @@ This phase is successful when:
 - All five features complete and tested
 - Extract supports multiple patterns and cleanup operations
 - Lint provides comprehensive integrity validation
-- 450+ tests pass on macOS and Ubuntu
+- 475+ tests pass on macOS and Ubuntu
 
 ## Risks & Assumptions
 
@@ -100,6 +105,7 @@ This phase is successful when:
 
 ## Phase Notes
 
+- 2025-11-29: Extract Clean Mode complete (010-extract-clean) with 477 tests; dry-run/preview mode deferred to Phase 5 backlog
 - 2025-11-27: Added Multi-Pattern Extraction and Extract Clean Mode features before Lint Command
 - 2025-10-29: Case-Insensitive Names added to Phase 3
 - 2025-10-28: Extract Command completed with 411 tests

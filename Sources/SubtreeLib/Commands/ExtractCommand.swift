@@ -1,6 +1,32 @@
 import ArgumentParser
 import Foundation
 
+// MARK: - Clean Mode Data Types (010-extract-clean)
+
+/// A file identified for cleaning
+struct CleanFileEntry {
+    /// Absolute path to source file in subtree (for checksum)
+    let sourcePath: String
+    
+    /// Absolute path to destination file (to be deleted)
+    let destinationPath: String
+    
+    /// Relative path from destination root (for display)
+    let relativePath: String
+}
+
+/// Result of validating a file before deletion
+enum CleanValidationResult {
+    /// Checksums match, safe to delete
+    case valid
+    
+    /// Destination file was modified (checksum mismatch)
+    case modified(sourceHash: String, destHash: String)
+    
+    /// Source file no longer exists in subtree
+    case sourceMissing
+}
+
 // MARK: - Concurrency-Safe Error Output
 
 /// Writes a message to stderr in a concurrency-safe way
@@ -31,15 +57,23 @@ private func writeStderr(_ message: String) {
 public struct ExtractCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "extract",
-        abstract: "Extract files from a subtree using glob patterns",
+        abstract: "Extract or clean files from a subtree using glob patterns",
         discussion: """
-            Extract files from managed subtrees into your project using flexible glob patterns.
+            Extract files from managed subtrees into your project, or clean (remove) previously
+            extracted files using the --clean flag. Uses flexible glob patterns.
             
-            MODES:
+            EXTRACTION MODES:
               • Ad-hoc extraction: Specify pattern and destination on command line
               • Bulk extraction: Use saved mappings from subtree.yaml (--name or --all)
             
-            EXAMPLES:
+            CLEAN MODES (--clean):
+              • Ad-hoc clean: Remove files matching patterns from destination
+              • Bulk clean: Remove all files from saved mappings (--name or --all)
+              
+              Clean mode validates checksums before deletion to protect modified files.
+              Use --force to override checksum validation and delete modified files.
+            
+            EXTRACTION EXAMPLES:
               # Extract markdown documentation
               subtree extract --name docs --from "**/*.md" --to project-docs/
               
@@ -49,15 +83,25 @@ public struct ExtractCommand: AsyncParsableCommand {
               # With exclusions (applies to all patterns)
               subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
               
-              # Save multi-pattern mapping for future use
-              subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/ --persist
+              # Save mapping for future use
+              subtree extract --name mylib --from "src/**/*.c" --to Sources/ --persist
               
               # Execute saved mappings
               subtree extract --name mylib
               subtree extract --all
+            
+            CLEAN EXAMPLES:
+              # Clean extracted files (checksum validated)
+              subtree extract --clean --name mylib --from "src/**/*.c" --to Sources/
               
-              # Override git-tracked file protection
-              subtree extract --name lib --from "*.md" --to docs/ --force
+              # Force clean modified files
+              subtree extract --clean --force --name mylib --from "*.c" --to Sources/
+              
+              # Clean all saved mappings for a subtree
+              subtree extract --clean --name mylib
+              
+              # Clean all saved mappings for all subtrees
+              subtree extract --clean --all
             
             GLOB PATTERNS:
               *       Match any characters except /
@@ -68,9 +112,9 @@ public struct ExtractCommand: AsyncParsableCommand {
             
             EXIT CODES:
               0  Success
-              1  User error (invalid input, not found)
-              2  System error (I/O, git, overwrite protection)
-              3  Configuration error (invalid subtree.yaml)
+              1  Validation error (checksum mismatch, not found)
+              2  User error (invalid flag combination)
+              3  I/O error (permission denied, filesystem error)
             """
     )
     
@@ -102,9 +146,26 @@ public struct ExtractCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Override git-tracked file protection (allows overwriting tracked files)")
     var force: Bool = false
     
+    // T021: --clean flag to trigger removal mode (010-extract-clean)
+    @Flag(name: .long, help: "Remove previously extracted files (opposite of extraction)")
+    var clean: Bool = false
+    
     public init() {}
     
     public func run() async throws {
+        // T022: Validate --clean and --persist cannot be combined
+        if clean && persist {
+            writeStderr("❌ Error: --clean and --persist cannot be used together\n")
+            writeStderr("   --clean removes files, --persist saves mappings for extraction\n")
+            Foundation.exit(2)
+        }
+        
+        // T023: Route to clean mode if --clean flag is set
+        if clean {
+            try await runCleanMode()
+            return
+        }
+        
         // T111: Mode selection based on --from/--to options
         let hasAdHocArgs = !from.isEmpty && to != nil
         
@@ -357,6 +418,402 @@ public struct ExtractCommand: AsyncParsableCommand {
             // T114: Exit with highest severity code
             let highestExitCode = failedMappings.map { $0.exitCode }.max() ?? 1
             Foundation.exit(highestExitCode)
+        }
+    }
+    
+    // MARK: - Clean Mode (010-extract-clean T023-T031)
+    
+    /// T023: Route clean mode based on arguments (ad-hoc vs bulk)
+    private func runCleanMode() async throws {
+        let hasAdHocArgs = !from.isEmpty && to != nil
+        
+        if hasAdHocArgs {
+            // AD-HOC CLEAN MODE
+            if all {
+                writeStderr("❌ Error: --all flag cannot be used with pattern arguments\n")
+                Foundation.exit(1)
+            }
+            
+            guard let subtreeName = name else {
+                writeStderr("❌ Error: --name is required for ad-hoc clean\n")
+                Foundation.exit(1)
+            }
+            
+            try await runAdHocClean(subtreeName: subtreeName)
+        } else {
+            // BULK CLEAN MODE
+            if !from.isEmpty || to != nil {
+                writeStderr("❌ Error: --from and --to must both be provided or both omitted\n")
+                Foundation.exit(1)
+            }
+            
+            if !all && name == nil {
+                writeStderr("❌ Error: Must specify either --name or --all for clean\n")
+                writeStderr("   Usage: subtree extract --clean --name <name>\n")
+                writeStderr("          subtree extract --clean --all\n")
+                Foundation.exit(1)
+            }
+            
+            // T046: Run bulk clean from persisted mappings
+            try await runBulkClean()
+        }
+    }
+    
+    /// T046: Bulk clean from persisted extraction mappings
+    private func runBulkClean() async throws {
+        // Validate git repo and config
+        let gitRoot = try await validateGitRepository()
+        let configPath = ConfigFileManager.configPath(gitRoot: gitRoot)
+        let config = try await validateConfigExists(at: configPath)
+        
+        // T047-T048: Collect subtrees to process
+        var subtreesToClean: [SubtreeEntry] = []
+        
+        if let subtreeName = name {
+            // T047: Single-subtree bulk clean
+            let subtree = try validateSubtreeExists(name: subtreeName, in: config)
+            subtreesToClean = [subtree]
+        } else if all {
+            // T048: All-subtrees bulk clean
+            subtreesToClean = config.subtrees
+        }
+        
+        // Track results for continue-on-error (T049)
+        var totalCleaned = 0
+        var failedMappings: [(subtree: String, mapping: Int, exitCode: Int32, message: String)] = []
+        var highestExitCode: Int32 = 0
+        
+        for subtree in subtreesToClean {
+            guard let extractions = subtree.extractions, !extractions.isEmpty else {
+                // T044: No mappings = success with message
+                print("ℹ️  '\(subtree.name)': No extraction mappings to clean")
+                continue
+            }
+            
+            print("📋 Cleaning '\(subtree.name)' (\(extractions.count) mapping(s))...")
+            
+            // Validate subtree prefix exists (unless --force)
+            var prefixValid = true
+            if !force {
+                do {
+                    try await validateSubtreePrefix(subtree.prefix, gitRoot: gitRoot)
+                } catch {
+                    prefixValid = false
+                    if !force {
+                        writeStderr("   ⚠️  Subtree prefix '\(subtree.prefix)' not found\n")
+                    }
+                }
+            }
+            
+            for (mappingIndex, mapping) in extractions.enumerated() {
+                let mappingNum = mappingIndex + 1
+                
+                // Process this mapping
+                do {
+                    let cleaned = try await cleanSingleMapping(
+                        mapping: mapping,
+                        subtree: subtree,
+                        gitRoot: gitRoot,
+                        prefixValid: prefixValid,
+                        mappingNum: mappingNum,
+                        totalMappings: extractions.count
+                    )
+                    totalCleaned += cleaned
+                } catch let error as CleanMappingError {
+                    // T049: Continue on error, collect failure
+                    failedMappings.append((
+                        subtree: subtree.name,
+                        mapping: mappingNum,
+                        exitCode: error.exitCode,
+                        message: error.message
+                    ))
+                    highestExitCode = max(highestExitCode, error.exitCode)
+                }
+            }
+        }
+        
+        // T050: Report summary
+        if failedMappings.isEmpty {
+            print("\n✅ Cleaned \(totalCleaned) file(s) total")
+        } else {
+            // T050: Failure summary
+            print("\n📊 Bulk clean completed with errors:")
+            print("   ✅ Cleaned \(totalCleaned) file(s)")
+            print("   ❌ \(failedMappings.count) mapping(s) failed")
+            
+            for failure in failedMappings {
+                writeStderr("   • \(failure.subtree) mapping \(failure.mapping): \(failure.message)\n")
+            }
+            
+            // T051: Exit with highest severity
+            Foundation.exit(highestExitCode)
+        }
+    }
+    
+    /// Error type for clean mapping failures
+    private struct CleanMappingError: Error {
+        let exitCode: Int32
+        let message: String
+    }
+    
+    /// Clean files for a single extraction mapping
+    private func cleanSingleMapping(
+        mapping: ExtractionMapping,
+        subtree: SubtreeEntry,
+        gitRoot: String,
+        prefixValid: Bool,
+        mappingNum: Int,
+        totalMappings: Int
+    ) async throws -> Int {
+        // Normalize destination
+        let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
+        let fullDestPath = gitRoot + "/" + normalizedDest
+        
+        // Find files to clean
+        let filesToClean = try await findFilesToClean(
+            patterns: mapping.from,
+            excludePatterns: mapping.exclude ?? [],
+            subtreePrefix: subtree.prefix,
+            destinationPath: fullDestPath,
+            gitRoot: gitRoot
+        )
+        
+        // Zero files = success for this mapping
+        guard !filesToClean.isEmpty else {
+            print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': 0 files (no matches)")
+            return 0
+        }
+        
+        // Validate checksums (unless --force)
+        var validatedFiles: [CleanFileEntry] = []
+        var skippedCount = 0
+        
+        for file in filesToClean {
+            let validationResult = await validateChecksumForClean(file: file, force: force)
+            
+            switch validationResult {
+            case .valid:
+                validatedFiles.append(file)
+            case .modified(let sourceHash, let destHash):
+                // In bulk mode, report error but throw to be caught by continue-on-error
+                throw CleanMappingError(
+                    exitCode: 1,
+                    message: "File '\(file.relativePath)' modified (src: \(sourceHash.prefix(8))..., dst: \(destHash.prefix(8))...)"
+                )
+            case .sourceMissing:
+                if force {
+                    validatedFiles.append(file)
+                } else {
+                    skippedCount += 1
+                }
+            }
+        }
+        
+        // Delete validated files
+        var pruner = DirectoryPruner(boundary: fullDestPath)
+        var deletedCount = 0
+        
+        for file in validatedFiles {
+            do {
+                try FileManager.default.removeItem(atPath: file.destinationPath)
+                pruner.add(parentOf: file.destinationPath)
+                deletedCount += 1
+            } catch {
+                throw CleanMappingError(
+                    exitCode: 3,
+                    message: "Failed to delete '\(file.relativePath)': \(error.localizedDescription)"
+                )
+            }
+        }
+        
+        // Prune empty directories
+        let prunedDirs = try pruner.pruneEmpty()
+        
+        // Report progress
+        var statusParts: [String] = ["\(deletedCount) file(s)"]
+        if prunedDirs > 0 {
+            statusParts.append("\(prunedDirs) dir(s) pruned")
+        }
+        if skippedCount > 0 {
+            statusParts.append("\(skippedCount) skipped")
+        }
+        print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': \(statusParts.joined(separator: ", "))")
+        
+        return deletedCount
+    }
+    
+    /// T024: Ad-hoc clean with pattern arguments
+    private func runAdHocClean(subtreeName: String) async throws {
+        guard let destinationValue = to else {
+            writeStderr("❌ Internal error: Missing --to in ad-hoc clean mode\n")
+            Foundation.exit(2)
+        }
+        
+        // Validate git repo and config
+        let gitRoot = try await validateGitRepository()
+        let configPath = ConfigFileManager.configPath(gitRoot: gitRoot)
+        let config = try await validateConfigExists(at: configPath)
+        let subtree = try validateSubtreeExists(name: subtreeName, in: config)
+        
+        // Validate subtree prefix exists (unless --force)
+        if !force {
+            try await validateSubtreePrefix(subtree.prefix, gitRoot: gitRoot)
+        }
+        
+        // Normalize destination
+        let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
+        let fullDestPath = gitRoot + "/" + normalizedDest
+        
+        // T025: Find files to clean in destination
+        let filesToClean = try await findFilesToClean(
+            patterns: from,
+            excludePatterns: exclude,
+            subtreePrefix: subtree.prefix,
+            destinationPath: fullDestPath,
+            gitRoot: gitRoot
+        )
+        
+        // BC-007: Zero files matched = success
+        guard !filesToClean.isEmpty else {
+            print("✅ Cleaned 0 file(s) from '\(subtreeName)' destination '\(normalizedDest)'")
+            print("   ℹ️  No files matched the pattern(s)")
+            return
+        }
+        
+        // T026-T028: Validate checksums and handle missing sources
+        var validatedFiles: [CleanFileEntry] = []
+        var skippedCount = 0
+        
+        for file in filesToClean {
+            let validationResult = await validateChecksumForClean(file: file, force: force)
+            
+            switch validationResult {
+            case .valid:
+                validatedFiles.append(file)
+            case .modified(let sourceHash, let destHash):
+                // T027: Fail fast on checksum mismatch (unless --force)
+                writeStderr("❌ Error: File '\(file.relativePath)' has been modified\n\n")
+                writeStderr("   Source hash:  \(sourceHash)\n")
+                writeStderr("   Dest hash:    \(destHash)\n\n")
+                writeStderr("Suggestion: Use --force to delete modified files, or restore original content.\n")
+                Foundation.exit(1)
+            case .sourceMissing:
+                // T028: Skip with warning for missing source (unless --force)
+                if force {
+                    validatedFiles.append(file)
+                } else {
+                    print("⚠️  Skipping '\(file.relativePath)': source file not found in subtree")
+                    skippedCount += 1
+                }
+            }
+        }
+        
+        // T029: Delete validated files
+        var pruner = DirectoryPruner(boundary: fullDestPath)
+        var deletedCount = 0
+        
+        for file in validatedFiles {
+            do {
+                try FileManager.default.removeItem(atPath: file.destinationPath)
+                pruner.add(parentOf: file.destinationPath)
+                deletedCount += 1
+            } catch {
+                writeStderr("❌ Error: Failed to delete '\(file.relativePath)': \(error.localizedDescription)\n")
+                Foundation.exit(3)
+            }
+        }
+        
+        // T030: Prune empty directories
+        let prunedDirs = try pruner.pruneEmpty()
+        
+        // T031: Success output
+        print("✅ Cleaned \(deletedCount) file(s) from '\(subtreeName)' destination '\(normalizedDest)'")
+        if prunedDirs > 0 {
+            print("   📁 Pruned \(prunedDirs) empty director\(prunedDirs == 1 ? "y" : "ies")")
+        }
+        if skippedCount > 0 {
+            print("   ⚠️  Skipped \(skippedCount) file(s) with missing source")
+        }
+    }
+    
+    /// T025: Find files in destination that match source patterns
+    private func findFilesToClean(
+        patterns: [String],
+        excludePatterns: [String],
+        subtreePrefix: String,
+        destinationPath: String,
+        gitRoot: String
+    ) async throws -> [CleanFileEntry] {
+        var allFiles: [CleanFileEntry] = []
+        var seenPaths = Set<String>()
+        
+        // Create exclusion matchers
+        let excludeMatchers = try excludePatterns.map { try GlobMatcher(pattern: $0) }
+        
+        for pattern in patterns {
+            let matcher = try GlobMatcher(pattern: pattern)
+            let patternPrefix = extractLiteralPrefix(from: pattern)
+            
+            // Scan destination directory for matching files
+            var matchedFiles: [(String, String)] = []
+            
+            // Check if destination exists
+            guard FileManager.default.fileExists(atPath: destinationPath) else {
+                continue
+            }
+            
+            try scanDirectory(
+                at: destinationPath,
+                relativeTo: destinationPath,
+                matcher: matcher,
+                excludeMatchers: excludeMatchers,
+                patternPrefix: patternPrefix,
+                results: &matchedFiles
+            )
+            
+            // Convert to CleanFileEntry with source paths
+            let sourcePrefixPath = gitRoot + "/" + subtreePrefix
+            for (destPath, relativePath) in matchedFiles {
+                if !seenPaths.contains(relativePath) {
+                    seenPaths.insert(relativePath)
+                    let sourcePath = sourcePrefixPath + "/" + relativePath
+                    allFiles.append(CleanFileEntry(
+                        sourcePath: sourcePath,
+                        destinationPath: destPath,
+                        relativePath: relativePath
+                    ))
+                }
+            }
+        }
+        
+        return allFiles
+    }
+    
+    /// T026: Validate checksum for a file before deletion
+    private func validateChecksumForClean(file: CleanFileEntry, force: Bool) async -> CleanValidationResult {
+        // If force mode, skip validation
+        if force {
+            return .valid
+        }
+        
+        // Check if source file exists
+        guard FileManager.default.fileExists(atPath: file.sourcePath) else {
+            return .sourceMissing
+        }
+        
+        // Compute checksums
+        do {
+            let sourceHash = try await GitOperations.hashObject(file: file.sourcePath)
+            let destHash = try await GitOperations.hashObject(file: file.destinationPath)
+            
+            if sourceHash == destHash {
+                return .valid
+            } else {
+                return .modified(sourceHash: sourceHash, destHash: destHash)
+            }
+        } catch {
+            // If we can't compute hash, treat as modified for safety
+            return .modified(sourceHash: "unknown", destHash: "unknown")
         }
     }
     
