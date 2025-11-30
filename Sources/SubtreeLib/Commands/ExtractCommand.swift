@@ -220,17 +220,23 @@ public struct ExtractCommand: AsyncParsableCommand {
         // T069: Destination path validation
         let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
         
+        // T039: Expand brace patterns in --from before matching (011-brace-expansion)
+        let expandedFromPatterns = expandBracePatterns(from)
+        
+        // T040: Expand brace patterns in --exclude before matching (011-brace-expansion)
+        let expandedExcludePatterns = expandBracePatterns(exclude)
+        
         // T023-T025 + T040: Multi-pattern matching with deduplication and per-pattern tracking
         // Process all --from patterns and collect unique files
         var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
         var seenPaths = Set<String>()  // T024: Deduplicate by relative path
         var patternMatchCounts: [(pattern: String, count: Int)] = []  // T040: Per-pattern tracking
         
-        for pattern in from {
+        for pattern in expandedFromPatterns {
             let matchedFiles = try await findMatchingFiles(
                 in: subtree.prefix,
                 pattern: pattern,
-                excludePatterns: exclude,
+                excludePatterns: expandedExcludePatterns,
                 gitRoot: gitRoot
             )
             
@@ -569,10 +575,14 @@ public struct ExtractCommand: AsyncParsableCommand {
         let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
         let fullDestPath = gitRoot + "/" + normalizedDest
         
+        // 011-brace-expansion: Expand brace patterns before matching
+        let expandedFromPatterns = expandBracePatterns(mapping.from)
+        let expandedExcludePatterns = expandBracePatterns(mapping.exclude ?? [])
+        
         // Find files to clean
         let filesToClean = try await findFilesToClean(
-            patterns: mapping.from,
-            excludePatterns: mapping.exclude ?? [],
+            patterns: expandedFromPatterns,
+            excludePatterns: expandedExcludePatterns,
             subtreePrefix: subtree.prefix,
             destinationPath: fullDestPath,
             gitRoot: gitRoot
@@ -664,10 +674,14 @@ public struct ExtractCommand: AsyncParsableCommand {
         let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
         let fullDestPath = gitRoot + "/" + normalizedDest
         
+        // 011-brace-expansion: Expand brace patterns before matching
+        let expandedFromPatterns = expandBracePatterns(from)
+        let expandedExcludePatterns = expandBracePatterns(exclude)
+        
         // T025: Find files to clean in destination
         let filesToClean = try await findFilesToClean(
-            patterns: from,
-            excludePatterns: exclude,
+            patterns: expandedFromPatterns,
+            excludePatterns: expandedExcludePatterns,
             subtreePrefix: subtree.prefix,
             destinationPath: fullDestPath,
             gitRoot: gitRoot
@@ -828,15 +842,19 @@ public struct ExtractCommand: AsyncParsableCommand {
         // Validate destination
         let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
         
+        // 011-brace-expansion: Expand brace patterns before matching
+        let expandedFromPatterns = expandBracePatterns(mapping.from)
+        let expandedExcludePatterns = expandBracePatterns(mapping.exclude ?? [])
+        
         // T026: Find matching files from ALL patterns (multi-pattern support)
         var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
         var seenPaths = Set<String>()  // Deduplicate by relative path
         
-        for pattern in mapping.from {
+        for pattern in expandedFromPatterns {
             let matchedFiles = try await findMatchingFiles(
                 in: subtree.prefix,
                 pattern: pattern,
-                excludePatterns: mapping.exclude ?? [],
+                excludePatterns: expandedExcludePatterns,
                 gitRoot: gitRoot
             )
             
@@ -980,6 +998,40 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         // Remove trailing slash if present for consistency
         return trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
+    }
+    
+    // MARK: - T038: Brace Expansion Helper (011-brace-expansion)
+    
+    /// Expand brace patterns in a list of patterns
+    ///
+    /// Applies `BraceExpander` to each pattern, handling errors with user-friendly messages.
+    /// Returns flattened array of all expanded patterns.
+    ///
+    /// - Parameter patterns: Array of patterns potentially containing braces
+    /// - Returns: Array of expanded patterns
+    /// - Throws: Never (exits with error code on failure)
+    private func expandBracePatterns(_ patterns: [String]) -> [String] {
+        var expandedPatterns: [String] = []
+        
+        for pattern in patterns {
+            do {
+                let expanded = try BraceExpander.expand(pattern)
+                expandedPatterns.append(contentsOf: expanded)
+            } catch BraceExpanderError.emptyAlternative(let invalidPattern) {
+                // T041: User-friendly error message
+                writeStderr("❌ Error: Invalid brace pattern '\(invalidPattern)'\n")
+                writeStderr("   Empty alternatives like {a,} or {,b} are not supported.\n\n")
+                writeStderr("Suggestions:\n")
+                writeStderr("  • Remove trailing/leading commas: {a,b} instead of {a,}\n")
+                writeStderr("  • Use separate --from flags for different patterns\n")
+                Foundation.exit(1)
+            } catch {
+                writeStderr("❌ Error: Failed to expand pattern '\(pattern)': \(error)\n")
+                Foundation.exit(1)
+            }
+        }
+        
+        return expandedPatterns
     }
     
     // MARK: - T070: Glob Pattern Matching

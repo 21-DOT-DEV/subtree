@@ -1,7 +1,7 @@
 # Product Roadmap: Subtree CLI
 
-**Version:** v1.5.0  
-**Last Updated:** 2025-11-27
+**Version:** v1.7.0  
+**Last Updated:** 2025-11-30
 
 ## Vision & Goals
 
@@ -31,8 +31,10 @@ Simplify git subtree management through declarative YAML configuration with safe
 
 - ✅ Case-Insensitive Names & Validation
 - ✅ Extract Command (5 user stories, 411 tests)
-- ⏳ **Multi-Pattern Extraction** — Multiple `--from` patterns in single extraction
-- ⏳ **Extract Clean Mode** — `--clean` flag to remove extracted files safely
+- ✅ Multi-Pattern Extraction (5 user stories, 439 tests)
+- ✅ Extract Clean Mode (5 user stories, 477 tests)
+- ✅ **Brace Expansion: Embedded Path Separators** (4 user stories, 526 tests)
+- ⏳ **Multi-Destination Extraction** — Fan-out to multiple `--to` paths
 - ⏳ Lint Command — Configuration integrity validation
 
 ## Product-Level Metrics & Success Criteria
@@ -62,7 +64,7 @@ Simplify git subtree management through declarative YAML configuration with safe
 1. **Phase 1 → Phase 2**: Core operations depend on config foundation
 2. **Phase 2 → Phase 3**: Extract and Lint require subtrees to exist (Add command)
 3. **Phase 3 → Phase 4**: Packaging requires all commands feature-complete
-4. **Multi-Pattern → Clean Mode**: Clean mode benefits from array pattern support
+4. **Multi-Pattern → Brace Expansion → Multi-Destination → Lint**: Pattern enhancements before validation
 
 ## Global Risks & Assumptions
 
@@ -78,6 +80,8 @@ Simplify git subtree management through declarative YAML configuration with safe
 
 ## Change Log
 
+- **v1.7.0** (2025-11-30): Brace Expansion complete (011-brace-expansion) with 526 tests; embedded path separators, cartesian product, bash pass-through semantics (MINOR — feature complete)
+- **v1.6.0** (2025-11-29): Added Brace Expansion and Multi-Destination Extraction to Phase 3; marked Multi-Pattern Extraction and Extract Clean Mode complete (MINOR — new features)
 - **v1.5.0** (2025-11-27): Roadmap refactored to multi-file structure; added Multi-Pattern Extraction and Extract Clean Mode to Phase 3 (MINOR — new features, structural improvement)
 - **v1.4.0** (2025-10-29): Phase 2 complete — Remove Command delivered with idempotent behavior (191 tests passing)
 - **v1.3.0** (2025-10-28): Phase 2 progress — Add Command and Update Command marked complete

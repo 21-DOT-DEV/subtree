@@ -1,12 +1,12 @@
 # AI Agent Guide: Subtree CLI
 
-**Last Updated**: 2025-11-29 | **Phase**: 010-extract-clean (Complete) | **Status**: Production-ready with Extract Clean Mode
+**Last Updated**: 2025-11-30 | **Phase**: 011-brace-expansion (Complete) | **Status**: Production-ready with Brace Expansion
 
 ## What This Project Is
 
 A Swift 6.1 command-line tool for managing git subtrees with declarative YAML configuration. Think "git submodule" but with subtrees, plus automatic config tracking and file extraction.
 
-**Current Reality**: Init + Add + Remove + Update + Extract (with clean mode) commands complete - Production-ready with 477 passing tests.
+**Current Reality**: Init + Add + Remove + Update + Extract (with clean mode + brace expansion) commands complete - Production-ready with 526 passing tests.
 
 ## Current State (5 Commands Complete)
 
@@ -20,7 +20,7 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 - **Extract command** (PRODUCTION-READY - extract files with glob patterns, persistent mappings, bulk execution, clean mode)
 - **1 stub command** (validate - prints "not yet implemented")
 - **Full CLI** (`subtree --help`, all command help screens work perfectly)
-- **Test suite** (477/477 tests pass: comprehensive integration + unit tests)
+- **Test suite** (526/526 tests pass: comprehensive integration + unit tests)
 - **Git test fixtures** (GitRepositoryFixture with UUID-based temp directories, async)
 - **Git verification helpers** (TestHarness for CLI execution, git state validation)
 - **Test infrastructure** (TestHarness with swift-subprocess, async/await, black-box testing)
@@ -141,8 +141,27 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 - Clear error messages with actionable suggestions
 - Appropriate exit codes (0=success, 1=validation, 2=user error, 3=I/O)
 
+### ✅ Brace Expansion Features (Complete - 4 User Stories)
+**US1 - Basic Expansion**:
+- `{a,b}` expands to multiple patterns
+- Embedded path separators: `{A,B/C}` works correctly
+- 100% backward compatible with existing patterns
+
+**US2 - Multiple Brace Groups**:
+- Cartesian product: `{a,b}{1,2}` → 4 patterns
+- Warning when >100 patterns generated
+
+**US3 - Pass-Through**:
+- Malformed patterns treated as literals (bash behavior)
+- `{a}`, `{}`, unclosed braces pass through unchanged
+
+**US4 - Safety**:
+- Empty alternatives (`{a,}`) produce clear error
+- User-friendly error messages with suggestions
+
 ### ⏳ What's Next
 - Implement lint/validate command
+- Multi-destination extraction (fan-out)
 - Additional enhancements and polish
 
 ## Architecture Overview
@@ -250,6 +269,10 @@ This project follows **strict constitutional governance**. Every feature:
   - Phase 3-4: Ad-hoc clean + Force override (MVP) ✅
   - Phase 5-6: Bulk clean + Multi-pattern clean ✅
   - Phase 7-8: Error handling + Polish ✅
+- **Brace Expansion (011)**: All 4 user stories complete ✅
+  - Phase 1-2: Setup + Foundational (BraceExpander utility) ✅
+  - Phase 3-6: Basic expansion, multiple groups, pass-through, errors ✅
+  - Phase 7-8: Integration + Polish (526 tests) ✅
 
 **Keep synchronized with**:
 - README.md (status, build instructions, usage examples)
@@ -261,4 +284,4 @@ This project follows **strict constitutional governance**. Every feature:
 **For Humans**: See README.md  
 **For Windsurf**: See .windsurf/rules/ (architecture, ci-cd, compliance)  
 **For Governance**: See .specify/memory/constitution.md  
-**For Requirements**: See specs/010-extract-clean/spec.md (latest feature)
+**For Requirements**: See specs/011-brace-expansion/spec.md (latest feature)

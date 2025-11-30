@@ -1,7 +1,7 @@
 # Phase 5 — Future Features (Backlog)
 
 **Status:** FUTURE  
-**Last Updated:** 2025-11-27
+**Last Updated:** 2025-11-29
 
 ## Goal
 
@@ -91,6 +91,32 @@ Post-1.0 enhancements for advanced workflows, improved onboarding, and enterpris
 - **Dependencies**: Update Command
 - **Notes**: Configurable retry count, distinguishes transient from permanent failures
 
+### 11. Brace Expansion: Backslash Escaping
+
+- **Purpose & user value**: Allow users to escape literal braces in patterns using `\{` and `\}` (bash-style escaping)
+- **Success metrics**:
+  - Users can match files with literal `{` or `}` characters in names
+  - `path/\{literal\}.txt` matches file named `{literal}.txt`
+- **Dependencies**: Brace Expansion (011)
+- **Notes**: MVP workaround is character class syntax `[{]` and `[}]`. Backslash escaping provides more intuitive syntax.
+
+### 12. Brace Expansion: Nested Braces
+
+- **Purpose & user value**: Support nested brace patterns like `{a,{b,c}}` expanding to `a`, `b`, `c`
+- **Success metrics**:
+  - Nested braces expand recursively matching bash behavior
+- **Dependencies**: Brace Expansion (011)
+- **Notes**: Adds complexity; evaluate user demand before implementing
+
+### 13. Brace Expansion: Numeric Ranges
+
+- **Purpose & user value**: Support numeric range patterns like `{1..10}` expanding to `1`, `2`, ..., `10`
+- **Success metrics**:
+  - Numeric ranges expand to sequential numbers
+  - Supports zero-padding `{01..10}` → `01`, `02`, ..., `10`
+- **Dependencies**: Brace Expansion (011)
+- **Notes**: Bash feature; useful for numbered files but lower priority than core expansion
+
 ## Dependencies & Sequencing
 
 - Features are independent and can be prioritized based on user demand
@@ -112,4 +138,5 @@ This phase is successful when:
 
 ## Phase Notes
 
+- 2025-11-29: Added Brace Expansion deferred features (backslash escaping, nested braces, numeric ranges)
 - 2025-11-27: Initial backlog created from roadmap refactor

@@ -165,6 +165,15 @@ subtree extract --name mylib \
   --from "src/**/*.c" \
   --to vendor/
 
+# Brace expansion (011) - compact patterns with {alternatives}
+subtree extract --name mylib --from "*.{h,c,cpp}" --to Sources/
+subtree extract --name mylib --from "{src,test}/*.swift" --to Sources/
+
+# Brace expansion with embedded path separators (different directory depths)
+subtree extract --name crypto-lib \
+  --from "Sources/{PrettyBytes,SecureBytes,BoringSSL/RNG}.swift" \
+  --to Crypto/
+
 # With exclusions (applies to all patterns)
 subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
 
