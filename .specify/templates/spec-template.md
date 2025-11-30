@@ -113,3 +113,17 @@
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
 - **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
 - **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+
+## Validation Steps *(optional)*
+
+<!--
+  If this feature requires manual validation beyond automated tests, document the steps here.
+  Otherwise, explicitly state: "All validation covered by automated tests."
+  
+  This section helps ensure quickstart.md or manual QA steps are planned upfront.
+-->
+
+- [ ] Step 1: [Manual validation step, e.g., "Run `command --flag` and verify output shows X"]
+- [ ] Step 2: [Manual validation step, e.g., "Create config with Y and verify behavior Z"]
+
+*Or state:* All validation covered by automated tests.

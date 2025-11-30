@@ -249,3 +249,18 @@ With multiple developers:
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+
+---
+
+## Type Change Checklist
+
+When changing a field's type (e.g., `String?` → `[String]}`, `Int` → `Int?`), verify:
+
+- [ ] All `!= nil` checks updated to appropriate emptiness checks (e.g., `.isEmpty`)
+- [ ] All `guard let` bindings updated to new type
+- [ ] All comparisons updated (e.g., `== nil` → `.isEmpty`)
+- [ ] All initializers updated to match new type
+- [ ] Run `swift build` (or equivalent) to catch remaining issues
+- [ ] Update tests to use new type format
+
+**Rationale**: Type changes propagate through the codebase. Missing updates cause lint errors mid-implementation.
