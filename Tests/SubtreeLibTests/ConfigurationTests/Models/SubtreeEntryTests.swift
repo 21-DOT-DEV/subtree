@@ -100,7 +100,7 @@ struct SubtreeEntryTests {
         
         #expect(entry.extractions?.count == 1)
         #expect(entry.extractions?[0].from == ["docs/**/*.md"])
-        #expect(entry.extractions?[0].to == "project-docs/")
+        #expect(entry.extractions?[0].to == ["project-docs/"])
     }
     
     // T015: Test for SubtreeEntry backward compatibility
@@ -161,9 +161,9 @@ struct SubtreeEntryTests {
         
         #expect(entry.extractions?.count == 2)
         #expect(entry.extractions?[0].from == ["src/**/*.{h,c}"])
-        #expect(entry.extractions?[0].to == "Sources/libsecp256k1/src/")
+        #expect(entry.extractions?[0].to == ["Sources/libsecp256k1/src/"])
         #expect(entry.extractions?[0].exclude?.count == 2)
         #expect(entry.extractions?[1].from == ["include/**/*.h"])
-        #expect(entry.extractions?[1].to == "Sources/libsecp256k1/include/")
+        #expect(entry.extractions?[1].to == ["Sources/libsecp256k1/include/"])
     }
 }

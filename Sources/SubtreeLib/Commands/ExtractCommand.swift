@@ -34,14 +34,17 @@ private func writeStderr(_ message: String) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 
-/// Extract files from a subtree using glob patterns (008-extract-command + 009-multi-pattern)
+/// Extract files from a subtree using glob patterns (008 + 009 + 012)
 ///
 /// This command supports two modes:
-/// 1. Ad-hoc extraction: Extract files using command-line patterns (supports multiple `--from` flags)
+/// 1. Ad-hoc extraction: Extract files using command-line patterns
 /// 2. Saved mappings: Extract files using saved extraction mappings from subtree.yaml
 ///
 /// Multi-pattern extraction (009): Use multiple `--from` flags to extract files from several
 /// directories in a single command. Files are deduplicated by relative path.
+///
+/// Multi-destination extraction (012): Use multiple `--to` flags to copy files to several
+/// destinations simultaneously (fan-out). Destinations are deduplicated by normalized path.
 ///
 /// Examples:
 /// ```
@@ -50,6 +53,9 @@ private func writeStderr(_ message: String) {
 ///
 /// # Multi-pattern: Extract headers AND sources in one command
 /// subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/
+///
+/// # Multi-destination: Fan-out to multiple locations
+/// subtree extract --name mylib --from "**/*.h" --to Lib/include/ --to Vendor/headers/
 ///
 /// # With exclusions (applies to all patterns)
 /// subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
@@ -80,11 +86,17 @@ public struct ExtractCommand: AsyncParsableCommand {
               # Multi-pattern: Extract headers AND sources together
               subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/
               
+              # Multi-destination: Fan-out to multiple locations (012)
+              subtree extract --name mylib --from "**/*.h" --to Lib/ --to Vendor/
+              
+              # Combined: Multi-pattern + multi-destination
+              subtree extract --name mylib --from "*.h" --from "*.c" --to Lib/ --to Vendor/
+              
               # With exclusions (applies to all patterns)
               subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
               
-              # Save mapping for future use
-              subtree extract --name mylib --from "src/**/*.c" --to Sources/ --persist
+              # Save mapping for future use (supports multi-destination)
+              subtree extract --name mylib --from "*.h" --to Lib/ --to Vendor/ --persist
               
               # Execute saved mappings
               subtree extract --name mylib
@@ -93,6 +105,9 @@ public struct ExtractCommand: AsyncParsableCommand {
             CLEAN EXAMPLES:
               # Clean extracted files (checksum validated)
               subtree extract --clean --name mylib --from "src/**/*.c" --to Sources/
+              
+              # Clean from multiple destinations
+              subtree extract --clean --name mylib --from "*.h" --to Lib/ --to Vendor/
               
               # Force clean modified files
               subtree extract --clean --force --name mylib --from "*.c" --to Sources/
@@ -130,9 +145,9 @@ public struct ExtractCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Glob pattern to match files (can be repeated for multi-pattern extraction)")
     var from: [String] = []
     
-    // T022: Destination option
-    @Option(name: .long, help: "Destination path relative to repository root (e.g., 'docs/', 'Sources/MyLib/')")
-    var to: String?
+    // T022 + T035: Destination option (repeatable for multi-destination extraction)
+    @Option(name: .long, help: "Destination path (can be repeated for multi-destination extraction)")
+    var to: [String] = []
     
     // T066: --exclude repeatable flag for exclusion patterns
     @Option(name: .long, help: "Glob pattern to exclude files (can be repeated)")
@@ -167,7 +182,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         }
         
         // T111: Mode selection based on --from/--to options
-        let hasAdHocArgs = !from.isEmpty && to != nil
+        let hasAdHocArgs = !from.isEmpty && !to.isEmpty
         
         if hasAdHocArgs {
             // AD-HOC MODE: Extract specific pattern
@@ -186,7 +201,7 @@ public struct ExtractCommand: AsyncParsableCommand {
             try await runAdHocExtraction(subtreeName: subtreeName)
         } else {
             // BULK MODE: Execute saved mappings
-            if !from.isEmpty || to != nil {
+            if !from.isEmpty || !to.isEmpty {
                 writeStderr("❌ Error: --from and --to must both be provided or both omitted\n")
                 Foundation.exit(1)
             }
@@ -205,9 +220,17 @@ public struct ExtractCommand: AsyncParsableCommand {
     // MARK: - Ad-Hoc Extraction Mode
     
     private func runAdHocExtraction(subtreeName: String) async throws {
-        guard let destinationValue = to else {
+        // T036: Deduplicate destinations using PathNormalizer
+        let deduplicatedDestinations = PathNormalizer.deduplicate(to)
+        
+        guard !deduplicatedDestinations.isEmpty else {
             writeStderr("❌ Internal error: Missing --to in ad-hoc mode\n")
             Foundation.exit(2)
+        }
+        
+        // T039: Soft limit warning for >10 destinations (FR-011)
+        if deduplicatedDestinations.count > 10 {
+            print("⚠️  Warning: \(deduplicatedDestinations.count) destinations specified (>10)")
         }
         
         // T068: Subtree validation
@@ -217,8 +240,12 @@ public struct ExtractCommand: AsyncParsableCommand {
         let subtree = try validateSubtreeExists(name: subtreeName, in: config)
         try await validateSubtreePrefix(subtree.prefix, gitRoot: gitRoot)
         
-        // T069: Destination path validation
-        let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
+        // T069: Validate all destination paths
+        var normalizedDestinations: [String] = []
+        for dest in deduplicatedDestinations {
+            let normalizedDest = try validateDestination(dest, gitRoot: gitRoot)
+            normalizedDestinations.append(normalizedDest)
+        }
         
         // T039: Expand brace patterns in --from before matching (011-brace-expansion)
         let expandedFromPatterns = expandBracePatterns(from)
@@ -272,47 +299,55 @@ public struct ExtractCommand: AsyncParsableCommand {
             print("⚠️  Pattern '\(zeroMatch.pattern)' matched 0 files")
         }
         
-        // T074: Destination directory creation
-        let fullDestPath = gitRoot + "/" + normalizedDest
-        try createDestinationDirectory(at: fullDestPath)
-        
-        // T132-T133: Check for git-tracked files before copying (unless --force)
+        // T047-T049: Fail-fast - validate ALL destinations upfront BEFORE copying to ANY
         if !force {
-            let trackedFiles = try await checkForTrackedFiles(
-                matchedFiles: allMatchedFiles,
-                fullDestPath: fullDestPath,
-                gitRoot: gitRoot
-            )
+            var allTrackedFiles: [String] = []
+            for normalizedDest in normalizedDestinations {
+                let fullDestPath = gitRoot + "/" + normalizedDest
+                let trackedFiles = try await checkForTrackedFiles(
+                    matchedFiles: allMatchedFiles,
+                    fullDestPath: fullDestPath,
+                    gitRoot: gitRoot
+                )
+                allTrackedFiles.append(contentsOf: trackedFiles)
+            }
             
-            if !trackedFiles.isEmpty {
-                // T135-T136: Show error and exit with code 2
-                try handleOverwriteProtection(trackedFiles: trackedFiles)
+            if !allTrackedFiles.isEmpty {
+                // T049: Show all conflicts across all destinations
+                try handleOverwriteProtection(trackedFiles: allTrackedFiles)
             }
         }
         
-        // T072: File copying with FileManager
-        // T073: Directory structure preservation
-        var copiedCount = 0
-        for (sourcePath, relativePath) in allMatchedFiles {
-            let destFilePath = fullDestPath + "/" + relativePath
-            try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
-            copiedCount += 1
+        // T037: Fan-out extraction to all destinations (after validation passes)
+        for normalizedDest in normalizedDestinations {
+            // T074: Destination directory creation
+            let fullDestPath = gitRoot + "/" + normalizedDest
+            try createDestinationDirectory(at: fullDestPath)
+            
+            // T072: File copying with FileManager
+            // T073: Directory structure preservation
+            var copiedCount = 0
+            for (sourcePath, relativePath) in allMatchedFiles {
+                let destFilePath = fullDestPath + "/" + relativePath
+                try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
+                copiedCount += 1
+            }
+            
+            // T038: Per-destination success output (FR-017)
+            print("✅ Extracted \(copiedCount) file(s) to '\(normalizedDest)'")
         }
         
-        // T092: Save mapping if --persist flag is set
+        // T092 + T041: Save mapping if --persist flag is set
         var mappingSaved = false
         if persist {
             mappingSaved = try await saveMappingToConfig(
                 patterns: from,
-                destination: destinationValue,  // Use original destination to preserve user's formatting
+                destinations: deduplicatedDestinations,  // T041: Use deduplicated destinations array
                 excludePatterns: exclude,
                 subtreeName: subtreeName,
                 configPath: configPath
             )
         }
-        
-        // T095: Contextual success messages
-        print("✅ Extracted \(copiedCount) file(s) from '\(subtreeName)' to '\(normalizedDest)'")
         if persist {
             if mappingSaved {
                 print("📝 Saved extraction mapping to subtree.yaml")
@@ -380,10 +415,10 @@ public struct ExtractCommand: AsyncParsableCommand {
                         mappingNum: mappingNum,
                         totalMappings: mappings.count
                     )
-                    print("  ✅ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (\(count) file\(count == 1 ? "" : "s"))")
+                    print("  ✅ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to.joined(separator: ", ")) (\(count) file\(count == 1 ? "" : "s"))")
                     successfulMappings += 1
                 } catch let error as GlobMatcherError {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (invalid pattern)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to.joined(separator: ", ")) (invalid pattern)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -391,7 +426,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                         exitCode: 1  // User error
                     ))
                 } catch let error as LocalizedError where error.errorDescription?.contains("git-tracked") == true {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (blocked: git-tracked files)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to.joined(separator: ", ")) (blocked: git-tracked files)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -399,7 +434,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                         exitCode: 2  // System error (overwrite protection)
                     ))
                 } catch {
-                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to) (failed)")
+                    print("  ❌ [\(mappingNum)/\(mappings.count)] \(mapping.from.joined(separator: ", ")) → \(mapping.to.joined(separator: ", ")) (failed)")
                     failedMappings.append((
                         subtreeName: subtree.name,
                         mappingIndex: mappingNum,
@@ -431,7 +466,7 @@ public struct ExtractCommand: AsyncParsableCommand {
     
     /// T023: Route clean mode based on arguments (ad-hoc vs bulk)
     private func runCleanMode() async throws {
-        let hasAdHocArgs = !from.isEmpty && to != nil
+        let hasAdHocArgs = !from.isEmpty && !to.isEmpty
         
         if hasAdHocArgs {
             // AD-HOC CLEAN MODE
@@ -448,7 +483,7 @@ public struct ExtractCommand: AsyncParsableCommand {
             try await runAdHocClean(subtreeName: subtreeName)
         } else {
             // BULK CLEAN MODE
-            if !from.isEmpty || to != nil {
+            if !from.isEmpty || !to.isEmpty {
                 writeStderr("❌ Error: --from and --to must both be provided or both omitted\n")
                 Foundation.exit(1)
             }
@@ -562,7 +597,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         let message: String
     }
     
-    /// Clean files for a single extraction mapping
+    /// Clean files for a single extraction mapping (multi-destination support)
     private func cleanSingleMapping(
         mapping: ExtractionMapping,
         subtree: SubtreeEntry,
@@ -571,90 +606,108 @@ public struct ExtractCommand: AsyncParsableCommand {
         mappingNum: Int,
         totalMappings: Int
     ) async throws -> Int {
-        // Normalize destination
-        let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
-        let fullDestPath = gitRoot + "/" + normalizedDest
+        // T044 + T052: Deduplicate destinations
+        let deduplicatedDestinations = PathNormalizer.deduplicate(mapping.to)
+        
+        // Validate all destinations
+        var normalizedDestinations: [String] = []
+        for dest in deduplicatedDestinations {
+            let normalizedDest = try validateDestination(dest, gitRoot: gitRoot)
+            normalizedDestinations.append(normalizedDest)
+        }
         
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(mapping.from)
         let expandedExcludePatterns = expandBracePatterns(mapping.exclude ?? [])
         
-        // Find files to clean
-        let filesToClean = try await findFilesToClean(
-            patterns: expandedFromPatterns,
-            excludePatterns: expandedExcludePatterns,
-            subtreePrefix: subtree.prefix,
-            destinationPath: fullDestPath,
-            gitRoot: gitRoot
-        )
+        // T044 + T052: Fan-out clean to all destinations
+        var totalDeletedCount = 0
         
-        // Zero files = success for this mapping
-        guard !filesToClean.isEmpty else {
-            print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': 0 files (no matches)")
-            return 0
-        }
-        
-        // Validate checksums (unless --force)
-        var validatedFiles: [CleanFileEntry] = []
-        var skippedCount = 0
-        
-        for file in filesToClean {
-            let validationResult = await validateChecksumForClean(file: file, force: force)
+        for normalizedDest in normalizedDestinations {
+            let fullDestPath = gitRoot + "/" + normalizedDest
             
-            switch validationResult {
-            case .valid:
-                validatedFiles.append(file)
-            case .modified(let sourceHash, let destHash):
-                // In bulk mode, report error but throw to be caught by continue-on-error
-                throw CleanMappingError(
-                    exitCode: 1,
-                    message: "File '\(file.relativePath)' modified (src: \(sourceHash.prefix(8))..., dst: \(destHash.prefix(8))...)"
-                )
-            case .sourceMissing:
-                if force {
+            // Find files to clean
+            let filesToClean = try await findFilesToClean(
+                patterns: expandedFromPatterns,
+                excludePatterns: expandedExcludePatterns,
+                subtreePrefix: subtree.prefix,
+                destinationPath: fullDestPath,
+                gitRoot: gitRoot
+            )
+            
+            // Zero files = success for this destination
+            guard !filesToClean.isEmpty else {
+                print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': 0 files (no matches)")
+                continue
+            }
+            
+            // Validate checksums (unless --force)
+            var validatedFiles: [CleanFileEntry] = []
+            var skippedCount = 0
+            
+            for file in filesToClean {
+                let validationResult = await validateChecksumForClean(file: file, force: force)
+                
+                switch validationResult {
+                case .valid:
                     validatedFiles.append(file)
-                } else {
-                    skippedCount += 1
+                case .modified(let sourceHash, let destHash):
+                    // In bulk mode, report error but throw to be caught by continue-on-error
+                    throw CleanMappingError(
+                        exitCode: 1,
+                        message: "File '\(file.relativePath)' in '\(normalizedDest)' modified (src: \(sourceHash.prefix(8))..., dst: \(destHash.prefix(8))...)"
+                    )
+                case .sourceMissing:
+                    if force {
+                        validatedFiles.append(file)
+                    } else {
+                        skippedCount += 1
+                    }
                 }
             }
-        }
-        
-        // Delete validated files
-        var pruner = DirectoryPruner(boundary: fullDestPath)
-        var deletedCount = 0
-        
-        for file in validatedFiles {
-            do {
-                try FileManager.default.removeItem(atPath: file.destinationPath)
-                pruner.add(parentOf: file.destinationPath)
-                deletedCount += 1
-            } catch {
-                throw CleanMappingError(
-                    exitCode: 3,
-                    message: "Failed to delete '\(file.relativePath)': \(error.localizedDescription)"
-                )
+            
+            // Delete validated files
+            var pruner = DirectoryPruner(boundary: fullDestPath)
+            var deletedCount = 0
+            
+            for file in validatedFiles {
+                do {
+                    try FileManager.default.removeItem(atPath: file.destinationPath)
+                    pruner.add(parentOf: file.destinationPath)
+                    deletedCount += 1
+                } catch {
+                    throw CleanMappingError(
+                        exitCode: 3,
+                        message: "Failed to delete '\(file.relativePath)': \(error.localizedDescription)"
+                    )
+                }
             }
+            
+            totalDeletedCount += deletedCount
+            
+            // Prune empty directories
+            let prunedDirs = try pruner.pruneEmpty()
+            
+            // Report progress for this destination
+            var statusParts: [String] = ["\(deletedCount) file(s)"]
+            if prunedDirs > 0 {
+                statusParts.append("\(prunedDirs) dir(s) pruned")
+            }
+            if skippedCount > 0 {
+                statusParts.append("\(skippedCount) skipped")
+            }
+            print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': \(statusParts.joined(separator: ", "))")
         }
         
-        // Prune empty directories
-        let prunedDirs = try pruner.pruneEmpty()
-        
-        // Report progress
-        var statusParts: [String] = ["\(deletedCount) file(s)"]
-        if prunedDirs > 0 {
-            statusParts.append("\(prunedDirs) dir(s) pruned")
-        }
-        if skippedCount > 0 {
-            statusParts.append("\(skippedCount) skipped")
-        }
-        print("   [\(mappingNum)/\(totalMappings)] → '\(normalizedDest)': \(statusParts.joined(separator: ", "))")
-        
-        return deletedCount
+        return totalDeletedCount
     }
     
-    /// T024: Ad-hoc clean with pattern arguments
+    /// T024 + T043-T046: Ad-hoc clean with pattern arguments (multi-destination)
     private func runAdHocClean(subtreeName: String) async throws {
-        guard let destinationValue = to else {
+        // T043: Deduplicate destinations using PathNormalizer
+        let deduplicatedDestinations = PathNormalizer.deduplicate(to)
+        
+        guard !deduplicatedDestinations.isEmpty else {
             writeStderr("❌ Internal error: Missing --to in ad-hoc clean mode\n")
             Foundation.exit(2)
         }
@@ -670,83 +723,92 @@ public struct ExtractCommand: AsyncParsableCommand {
             try await validateSubtreePrefix(subtree.prefix, gitRoot: gitRoot)
         }
         
-        // Normalize destination
-        let normalizedDest = try validateDestination(destinationValue, gitRoot: gitRoot)
-        let fullDestPath = gitRoot + "/" + normalizedDest
+        // Validate all destination paths
+        var normalizedDestinations: [String] = []
+        for dest in deduplicatedDestinations {
+            let normalizedDest = try validateDestination(dest, gitRoot: gitRoot)
+            normalizedDestinations.append(normalizedDest)
+        }
         
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(from)
         let expandedExcludePatterns = expandBracePatterns(exclude)
         
-        // T025: Find files to clean in destination
-        let filesToClean = try await findFilesToClean(
-            patterns: expandedFromPatterns,
-            excludePatterns: expandedExcludePatterns,
-            subtreePrefix: subtree.prefix,
-            destinationPath: fullDestPath,
-            gitRoot: gitRoot
-        )
-        
-        // BC-007: Zero files matched = success
-        guard !filesToClean.isEmpty else {
-            print("✅ Cleaned 0 file(s) from '\(subtreeName)' destination '\(normalizedDest)'")
-            print("   ℹ️  No files matched the pattern(s)")
-            return
-        }
-        
-        // T026-T028: Validate checksums and handle missing sources
-        var validatedFiles: [CleanFileEntry] = []
-        var skippedCount = 0
-        
-        for file in filesToClean {
-            let validationResult = await validateChecksumForClean(file: file, force: force)
+        // T043-T046: Fan-out clean to all destinations
+        for normalizedDest in normalizedDestinations {
+            let fullDestPath = gitRoot + "/" + normalizedDest
             
-            switch validationResult {
-            case .valid:
-                validatedFiles.append(file)
-            case .modified(let sourceHash, let destHash):
-                // T027: Fail fast on checksum mismatch (unless --force)
-                writeStderr("❌ Error: File '\(file.relativePath)' has been modified\n\n")
-                writeStderr("   Source hash:  \(sourceHash)\n")
-                writeStderr("   Dest hash:    \(destHash)\n\n")
-                writeStderr("Suggestion: Use --force to delete modified files, or restore original content.\n")
-                Foundation.exit(1)
-            case .sourceMissing:
-                // T028: Skip with warning for missing source (unless --force)
-                if force {
+            // T025: Find files to clean in destination
+            let filesToClean = try await findFilesToClean(
+                patterns: expandedFromPatterns,
+                excludePatterns: expandedExcludePatterns,
+                subtreePrefix: subtree.prefix,
+                destinationPath: fullDestPath,
+                gitRoot: gitRoot
+            )
+            
+            // BC-007: Zero files matched = success for this destination
+            guard !filesToClean.isEmpty else {
+                print("✅ Cleaned 0 file(s) from '\(subtreeName)' destination '\(normalizedDest)'")
+                continue
+            }
+            
+            // T026-T028: Validate checksums and handle missing sources
+            var validatedFiles: [CleanFileEntry] = []
+            var skippedCount = 0
+            
+            for file in filesToClean {
+                let validationResult = await validateChecksumForClean(file: file, force: force)
+                
+                switch validationResult {
+                case .valid:
                     validatedFiles.append(file)
-                } else {
-                    print("⚠️  Skipping '\(file.relativePath)': source file not found in subtree")
-                    skippedCount += 1
+                case .modified(let sourceHash, let destHash):
+                    // T045: Fail fast on checksum mismatch (unless --force)
+                    writeStderr("❌ Error: File '\(file.relativePath)' in '\(normalizedDest)' has been modified\n\n")
+                    writeStderr("   Source hash:  \(sourceHash)\n")
+                    writeStderr("   Dest hash:    \(destHash)\n\n")
+                    writeStderr("Suggestion: Use --force to delete modified files, or restore original content.\n")
+                    Foundation.exit(1)
+                case .sourceMissing:
+                    // T028: Skip with warning for missing source (unless --force)
+                    if force {
+                        validatedFiles.append(file)
+                    } else {
+                        print("⚠️  Skipping '\(file.relativePath)': source file not found in subtree")
+                        skippedCount += 1
+                    }
                 }
             }
-        }
-        
-        // T029: Delete validated files
-        var pruner = DirectoryPruner(boundary: fullDestPath)
-        var deletedCount = 0
-        
-        for file in validatedFiles {
-            do {
-                try FileManager.default.removeItem(atPath: file.destinationPath)
-                pruner.add(parentOf: file.destinationPath)
-                deletedCount += 1
-            } catch {
-                writeStderr("❌ Error: Failed to delete '\(file.relativePath)': \(error.localizedDescription)\n")
-                Foundation.exit(3)
+            
+            // T029: Delete validated files
+            var pruner = DirectoryPruner(boundary: fullDestPath)
+            var deletedCount = 0
+            
+            for file in validatedFiles {
+                do {
+                    try FileManager.default.removeItem(atPath: file.destinationPath)
+                    pruner.add(parentOf: file.destinationPath)
+                    deletedCount += 1
+                } catch {
+                    writeStderr("❌ Error: Failed to delete '\(file.relativePath)': \(error.localizedDescription)\n")
+                    Foundation.exit(3)
+                }
             }
-        }
-        
-        // T030: Prune empty directories
-        let prunedDirs = try pruner.pruneEmpty()
-        
-        // T031: Success output
-        print("✅ Cleaned \(deletedCount) file(s) from '\(subtreeName)' destination '\(normalizedDest)'")
-        if prunedDirs > 0 {
-            print("   📁 Pruned \(prunedDirs) empty director\(prunedDirs == 1 ? "y" : "ies")")
-        }
-        if skippedCount > 0 {
-            print("   ⚠️  Skipped \(skippedCount) file(s) with missing source")
+            
+            // T030: Prune empty directories
+            let prunedDirs = try pruner.pruneEmpty()
+            
+            // T046: Per-destination success output
+            var statusParts: [String] = []
+            if prunedDirs > 0 {
+                statusParts.append("\(prunedDirs) dir(s) pruned")
+            }
+            if skippedCount > 0 {
+                statusParts.append("\(skippedCount) skipped")
+            }
+            let suffix = statusParts.isEmpty ? "" : " (\(statusParts.joined(separator: ", ")))"
+            print("✅ Cleaned \(deletedCount) file(s) from '\(normalizedDest)'\(suffix)")
         }
     }
     
@@ -839,8 +901,15 @@ public struct ExtractCommand: AsyncParsableCommand {
         mappingNum: Int,
         totalMappings: Int
     ) async throws -> Int {
-        // Validate destination
-        let normalizedDest = try validateDestination(mapping.to, gitRoot: gitRoot)
+        // T040: Deduplicate destinations using PathNormalizer (012-multi-destination)
+        let deduplicatedDestinations = PathNormalizer.deduplicate(mapping.to)
+        
+        // Validate all destinations
+        var normalizedDestinations: [String] = []
+        for dest in deduplicatedDestinations {
+            let normalizedDest = try validateDestination(dest, gitRoot: gitRoot)
+            normalizedDestinations.append(normalizedDest)
+        }
         
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(mapping.from)
@@ -871,20 +940,20 @@ public struct ExtractCommand: AsyncParsableCommand {
             return 0  // No files matched, but not an error
         }
         
-        // Create destination directory
-        let fullDestPath = gitRoot + "/" + normalizedDest
-        try createDestinationDirectory(at: fullDestPath)
-        
-        // Check for tracked files (unless --force)
-        // In bulk mode, this will be caught as an error for this specific mapping
+        // T047-T049 + T053: Fail-fast - validate ALL destinations upfront BEFORE copying to ANY
         if !force {
-            let trackedFiles = try await checkForTrackedFiles(
-                matchedFiles: allMatchedFiles,
-                fullDestPath: fullDestPath,
-                gitRoot: gitRoot
-            )
+            var allTrackedFiles: [String] = []
+            for normalizedDest in normalizedDestinations {
+                let fullDestPath = gitRoot + "/" + normalizedDest
+                let trackedFiles = try await checkForTrackedFiles(
+                    matchedFiles: allMatchedFiles,
+                    fullDestPath: fullDestPath,
+                    gitRoot: gitRoot
+                )
+                allTrackedFiles.append(contentsOf: trackedFiles)
+            }
             
-            if !trackedFiles.isEmpty {
+            if !allTrackedFiles.isEmpty {
                 // For bulk mode, throw an error that will be caught and reported
                 struct OverwriteProtectionError: Error, LocalizedError {
                     let trackedFiles: [String]
@@ -892,19 +961,26 @@ public struct ExtractCommand: AsyncParsableCommand {
                         "Would overwrite \(trackedFiles.count) git-tracked file(s)"
                     }
                 }
-                throw OverwriteProtectionError(trackedFiles: trackedFiles)
+                throw OverwriteProtectionError(trackedFiles: allTrackedFiles)
             }
         }
         
-        // Copy files
-        var copiedCount = 0
-        for (sourcePath, relativePath) in allMatchedFiles {
-            let destFilePath = fullDestPath + "/" + relativePath
-            try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
-            copiedCount += 1
+        // T040: Fan-out to all destinations (after validation passes)
+        var totalCopiedCount = 0
+        for normalizedDest in normalizedDestinations {
+            // Create destination directory
+            let fullDestPath = gitRoot + "/" + normalizedDest
+            try createDestinationDirectory(at: fullDestPath)
+            
+            // Copy files to this destination
+            for (sourcePath, relativePath) in allMatchedFiles {
+                let destFilePath = fullDestPath + "/" + relativePath
+                try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
+                totalCopiedCount += 1
+            }
         }
         
-        return copiedCount
+        return totalCopiedCount
     }
     
     // MARK: - T068: Subtree Validation
@@ -1204,7 +1280,7 @@ public struct ExtractCommand: AsyncParsableCommand {
     ///
     /// - Parameters:
     ///   - patterns: Array of glob patterns (from field)
-    ///   - destination: Destination path (to field)
+    ///   - destinations: Destination paths (to field) - T041: now supports array
     ///   - excludePatterns: Exclusion patterns (exclude field)
     ///   - subtreeName: Name of subtree to save mapping to
     ///   - configPath: Path to subtree.yaml
@@ -1212,25 +1288,43 @@ public struct ExtractCommand: AsyncParsableCommand {
     /// - Throws: I/O errors or config errors
     private func saveMappingToConfig(
         patterns: [String],
-        destination: String,
+        destinations: [String],
         excludePatterns: [String],
         subtreeName: String,
         configPath: String
     ) async throws -> Bool {
-        // T093: Construct ExtractionMapping from CLI flags
-        // Use single-pattern init for single pattern, multi-pattern for multiple
+        // T093 + T041: Construct ExtractionMapping from CLI flags
+        // Use appropriate initializer based on single vs multiple patterns/destinations
         let mapping: ExtractionMapping
-        if patterns.count == 1 {
+        let excludeValue = excludePatterns.isEmpty ? nil : excludePatterns
+        
+        if patterns.count == 1 && destinations.count == 1 {
+            // Single pattern, single destination
             mapping = ExtractionMapping(
                 from: patterns[0],
-                to: destination,
-                exclude: excludePatterns.isEmpty ? nil : excludePatterns
+                to: destinations[0],
+                exclude: excludeValue
             )
-        } else {
+        } else if patterns.count == 1 {
+            // Single pattern, multiple destinations
+            mapping = ExtractionMapping(
+                from: patterns[0],
+                toDestinations: destinations,
+                exclude: excludeValue
+            )
+        } else if destinations.count == 1 {
+            // Multiple patterns, single destination
             mapping = ExtractionMapping(
                 fromPatterns: patterns,
-                to: destination,
-                exclude: excludePatterns.isEmpty ? nil : excludePatterns
+                to: destinations[0],
+                exclude: excludeValue
+            )
+        } else {
+            // Multiple patterns, multiple destinations
+            mapping = ExtractionMapping(
+                fromPatterns: patterns,
+                toDestinations: destinations,
+                exclude: excludeValue
             )
         }
         

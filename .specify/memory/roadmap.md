@@ -1,6 +1,6 @@
 # Product Roadmap: Subtree CLI
 
-**Version:** v1.7.0  
+**Version:** v1.8.0  
 **Last Updated:** 2025-11-30
 
 ## Vision & Goals
@@ -34,7 +34,7 @@ Simplify git subtree management through declarative YAML configuration with safe
 - ✅ Multi-Pattern Extraction (5 user stories, 439 tests)
 - ✅ Extract Clean Mode (5 user stories, 477 tests)
 - ✅ **Brace Expansion: Embedded Path Separators** (4 user stories, 526 tests)
-- ⏳ **Multi-Destination Extraction** — Fan-out to multiple `--to` paths
+- ✅ **Multi-Destination Extraction** (5 user stories, 571 tests) — Fan-out to multiple `--to` paths
 - ⏳ Lint Command — Configuration integrity validation
 
 ## Product-Level Metrics & Success Criteria
@@ -80,6 +80,7 @@ Simplify git subtree management through declarative YAML configuration with safe
 
 ## Change Log
 
+- **v1.8.0** (2025-11-30): Multi-Destination Extraction complete (012-multi-destination-extraction) with 571 tests; fan-out to multiple `--to` paths, fail-fast validation, clean mode parity, bulk support (MINOR — feature complete)
 - **v1.7.0** (2025-11-30): Brace Expansion complete (011-brace-expansion) with 526 tests; embedded path separators, cartesian product, bash pass-through semantics (MINOR — feature complete)
 - **v1.6.0** (2025-11-29): Added Brace Expansion and Multi-Destination Extraction to Phase 3; marked Multi-Pattern Extraction and Extract Clean Mode complete (MINOR — new features)
 - **v1.5.0** (2025-11-27): Roadmap refactored to multi-file structure; added Multi-Pattern Extraction and Extract Clean Mode to Phase 3 (MINOR — new features, structural improvement)

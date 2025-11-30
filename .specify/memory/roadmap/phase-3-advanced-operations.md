@@ -82,7 +82,7 @@ Enable portable configuration validation, selective file extraction with compreh
   - Nested braces, escaping, numeric ranges deferred to backlog
 - **Delivered**: All 4 user stories (basic expansion, multiple groups, pass-through, empty alternative errors), 526 tests passing
 
-### 6. Multi-Destination Extraction (Fan-Out) ⏳ PLANNED
+### 6. Multi-Destination Extraction (Fan-Out) ✅ COMPLETE
 
 - **Purpose & user value**: Allows extracting matched files to multiple destinations simultaneously (e.g., `--to Lib/ --to Vendor/`), enabling distribution of extracted files to multiple locations without repeated commands
 - **Success metrics**:
@@ -95,7 +95,10 @@ Enable portable configuration validation, selective file extraction with compreh
   - Fan-out semantics: N files × M destinations = N×M copy operations
   - Directory structure preserved at each destination
   - YAML schema: `to: ["path1/", "path2/"]` for persisted mappings
-  - Atomic per-destination: all files to one destination succeed or fail together
+  - Fail-fast validation: all destinations checked upfront before any writes
+  - PathNormalizer deduplicates equivalent paths (`Lib/`, `./Lib`, `Lib` → single destination)
+  - Backward compatible: single `--to` and existing YAML configs unchanged
+- **Delivered**: All 5 user stories (CLI multi-dest, persist arrays, clean mode, fail-fast, bulk support), 571 tests passing
 
 ### 7. Lint Command ⏳ PLANNED
 
@@ -116,7 +119,7 @@ Enable portable configuration validation, selective file extraction with compreh
   3. Multi-Pattern Extraction ✅
   4. Extract Clean Mode ✅
   5. Brace Expansion in Patterns ✅
-  6. Multi-Destination Extraction ⏳
+  6. Multi-Destination Extraction ✅
   7. Lint Command ⏳ (final Phase 3 feature)
 - **Rationale**: Brace Expansion and Multi-Destination extend pattern capabilities before Lint validates all operations
 - **Cross-phase dependencies**: Requires Phase 2 Add Command for subtrees to exist
@@ -127,7 +130,7 @@ This phase is successful when:
 - All seven features complete and tested
 - Extract supports multiple patterns and cleanup operations
 - Lint provides comprehensive integrity validation
-- 600+ tests pass on macOS and Ubuntu (currently 526, growing)
+- 600+ tests pass on macOS and Ubuntu (currently 571, growing)
 
 ## Risks & Assumptions
 
@@ -138,6 +141,7 @@ This phase is successful when:
 
 ## Phase Notes
 
+- 2025-11-30: Multi-Destination Extraction complete (012-multi-destination-extraction) with 571 tests; 5 user stories delivered
 - 2025-11-30: Brace Expansion complete (011-brace-expansion) with 526 tests; 4 user stories delivered
 - 2025-11-29: Added Brace Expansion and Multi-Destination Extraction features
 - 2025-11-29: Extract Clean Mode complete (010-extract-clean) with 477 tests; dry-run/preview mode deferred to Phase 5 backlog

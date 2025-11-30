@@ -165,6 +165,17 @@ subtree extract --name mylib \
   --from "src/**/*.c" \
   --to vendor/
 
+# Multi-destination extraction (012) - fan-out to multiple locations
+subtree extract --name mylib \
+  --from "**/*.h" \
+  --to Lib/include/ \
+  --to Vendor/headers/
+
+# Combined: multi-pattern + multi-destination (cartesian product)
+subtree extract --name mylib \
+  --from "*.h" --from "*.c" \
+  --to Lib/ --to Vendor/
+
 # Brace expansion (011) - compact patterns with {alternatives}
 subtree extract --name mylib --from "*.{h,c,cpp}" --to Sources/
 subtree extract --name mylib --from "{src,test}/*.swift" --to Sources/
@@ -177,8 +188,8 @@ subtree extract --name crypto-lib \
 # With exclusions (applies to all patterns)
 subtree extract --name mylib --from "src/**/*.c" --to Sources/ --exclude "**/test/**"
 
-# Save multi-pattern mapping for future use
-subtree extract --name mylib --from "include/**/*.h" --from "src/**/*.c" --to vendor/ --persist
+# Save multi-destination mapping for future use
+subtree extract --name mylib --from "**/*.h" --to Lib/ --to Vendor/ --persist
 
 # Execute saved mappings from subtree.yaml
 subtree extract --name example-lib
@@ -192,6 +203,9 @@ Remove previously extracted files with checksum validation:
 ```bash
 # Clean specific files (validates checksums before deletion)
 subtree extract --clean --name mylib --from "src/**/*.c" --to Sources/
+
+# Clean from multiple destinations (012)
+subtree extract --clean --name mylib --from "**/*.h" --to Lib/ --to Vendor/
 
 # Clean all saved mappings for a subtree
 subtree extract --clean --name mylib
@@ -258,6 +272,7 @@ subtree validate --with-remote
   - `--persist` - Save mapping to subtree.yaml
   - `--force` - Overwrite git-tracked files / force delete modified files
   - `--clean` - Remove extracted files (validates checksums first)
+  - Multi-destination: Use `--to` multiple times for fan-out extraction
 
 - **`validate`** - Verify subtree integrity
   - `--name <name>` - Validate specific subtree
@@ -287,16 +302,28 @@ subtrees:
     squash: true                         # Default: true
     commit: 0123456789abcdef...          # Latest known commit
     extractions:                         # File extraction mappings
-      # Single pattern (legacy format)
+      # Single pattern, single destination (legacy format)
       - from: "docs/**/*.md"
         to: Docs/
-      # Multi-pattern (009) - array format
+      # Multi-pattern (009) - union extraction
       - from:
           - "include/**/*.h"
           - "src/**/*.c"
         to: vendor/
         exclude:
           - "**/test/**"
+      # Multi-destination (012) - fan-out to multiple locations
+      - from: "**/*.h"
+        to:
+          - Lib/include/
+          - Vendor/headers/
+      # Combined: multi-pattern + multi-destination
+      - from:
+          - "*.h"
+          - "*.c"
+        to:
+          - Lib/
+          - Vendor/
 ```
 
 ## Platform Compatibility
