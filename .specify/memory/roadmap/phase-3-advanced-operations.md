@@ -1,7 +1,7 @@
 # Phase 3 — Advanced Operations & Safety
 
 **Status:** ACTIVE  
-**Last Updated:** 2025-11-29
+**Last Updated:** 2025-11-30
 
 ## Goal
 
@@ -66,7 +66,38 @@ Enable portable configuration validation, selective file extraction with compreh
   - Continue-on-error for bulk operations with failure summary
 - **Delivered**: All 5 user stories (ad-hoc clean, force override, bulk clean, multi-pattern, error handling), 477 tests passing
 
-### 5. Lint Command ⏳ PLANNED
+### 5. Brace Expansion: Embedded Path Separators ✅ COMPLETE
+
+- **Purpose & user value**: Extends existing brace expansion (`*.{h,c}`) to support embedded path separators (e.g., `Sources/{A,B/C}.swift`), enabling extraction from directories at different depths with a single pattern
+- **Success metrics**:
+  - Patterns like `Sources/{A,B/C}.swift` correctly match files at different directory depths
+  - Multiple brace groups expand as cartesian product (bash behavior)
+  - 100% backward compatible with existing patterns
+- **Dependencies**: Multi-Pattern Extraction, Extract Command (existing GlobMatcher)
+- **Notes**:
+  - GlobMatcher already supports basic `{a,b}` for extensions; this adds pre-expansion for path separators
+  - Pre-expansion at CLI level via `BraceExpander` utility (bash semantics)
+  - Only applies to `--from` and `--exclude` patterns (`--to` is destination path, not glob)
+  - Example: `Sources/Crypto/{PrettyBytes,SecureBytes,BoringSSL/RNG_boring}.swift` → 3 patterns
+  - Nested braces, escaping, numeric ranges deferred to backlog
+- **Delivered**: All 4 user stories (basic expansion, multiple groups, pass-through, empty alternative errors), 526 tests passing
+
+### 6. Multi-Destination Extraction (Fan-Out) ⏳ PLANNED
+
+- **Purpose & user value**: Allows extracting matched files to multiple destinations simultaneously (e.g., `--to Lib/ --to Vendor/`), enabling distribution of extracted files to multiple locations without repeated commands
+- **Success metrics**:
+  - Multiple `--to` flags supported in single command
+  - Each matched file copied to every `--to` destination (fan-out)
+  - `--from` and `--to` counts independent (no positional pairing)
+  - Works with all existing extract modes (ad-hoc, bulk, clean)
+- **Dependencies**: Multi-Pattern Extraction
+- **Notes**:
+  - Fan-out semantics: N files × M destinations = N×M copy operations
+  - Directory structure preserved at each destination
+  - YAML schema: `to: ["path1/", "path2/"]` for persisted mappings
+  - Atomic per-destination: all files to one destination succeed or fail together
+
+### 7. Lint Command ⏳ PLANNED
 
 - **Purpose & user value**: Validates subtree integrity and synchronization state offline and with remote checks, enabling users to detect configuration drift, missing subtrees, or desync between config and repository state
 - **Success metrics**:
@@ -84,17 +115,19 @@ Enable portable configuration validation, selective file extraction with compreh
   2. Extract Command ✅
   3. Multi-Pattern Extraction ✅
   4. Extract Clean Mode ✅
-  5. Lint Command ⏳ (final Phase 3 feature)
-- **Rationale**: Lint command validates all previous operations and completes Phase 3
+  5. Brace Expansion in Patterns ✅
+  6. Multi-Destination Extraction ⏳
+  7. Lint Command ⏳ (final Phase 3 feature)
+- **Rationale**: Brace Expansion and Multi-Destination extend pattern capabilities before Lint validates all operations
 - **Cross-phase dependencies**: Requires Phase 2 Add Command for subtrees to exist
 
 ## Phase-Specific Metrics & Success Criteria
 
 This phase is successful when:
-- All five features complete and tested
+- All seven features complete and tested
 - Extract supports multiple patterns and cleanup operations
 - Lint provides comprehensive integrity validation
-- 475+ tests pass on macOS and Ubuntu
+- 600+ tests pass on macOS and Ubuntu (currently 526, growing)
 
 ## Risks & Assumptions
 
@@ -105,6 +138,8 @@ This phase is successful when:
 
 ## Phase Notes
 
+- 2025-11-30: Brace Expansion complete (011-brace-expansion) with 526 tests; 4 user stories delivered
+- 2025-11-29: Added Brace Expansion and Multi-Destination Extraction features
 - 2025-11-29: Extract Clean Mode complete (010-extract-clean) with 477 tests; dry-run/preview mode deferred to Phase 5 backlog
 - 2025-11-27: Added Multi-Pattern Extraction and Extract Clean Mode features before Lint Command
 - 2025-10-29: Case-Insensitive Names added to Phase 3

@@ -1665,4 +1665,173 @@ struct ExtractIntegrationTests {
         #expect(result.exitCode != 0, "Should fail when destination is file not directory")
         #expect(result.stderr.count > 0, "Should have error message")
     }
+    
+    // MARK: - Brace Expansion Integration Tests (011-brace-expansion T034-T036)
+    
+    // T034: Extract with embedded path separator pattern
+    @Test("Extract with embedded path separator pattern {A,B/C}")
+    func testExtractWithEmbeddedPathSeparator() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree with nested structure
+        let subtreePrefix = "vendor/lib"
+        let dirs = [
+            "\(subtreePrefix)/A",
+            "\(subtreePrefix)/B/C"
+        ]
+        for dir in dirs {
+            try FileManager.default.createDirectory(
+                atPath: fixture.path.string + "/" + dir,
+                withIntermediateDirectories: true
+            )
+        }
+        
+        // Create files at different depths
+        try "contentA".write(toFile: fixture.path.string + "/" + subtreePrefix + "/A/file.swift",
+                            atomically: true, encoding: .utf8)
+        try "contentBC".write(toFile: fixture.path.string + "/" + subtreePrefix + "/B/C/file.swift",
+                             atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Extract using brace expansion with embedded path separator
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "--from", "{A,B/C}/*.swift", "--to", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 0, "Should succeed with brace expansion: \(result.stderr)")
+        
+        // Verify both files were extracted
+        let fileAExists = FileManager.default.fileExists(
+            atPath: fixture.path.string + "/output/A/file.swift"
+        )
+        let fileBCExists = FileManager.default.fileExists(
+            atPath: fixture.path.string + "/output/B/C/file.swift"
+        )
+        
+        #expect(fileAExists, "Should extract A/file.swift")
+        #expect(fileBCExists, "Should extract B/C/file.swift (embedded path separator)")
+    }
+    
+    // T035: Extract with multiple brace groups (cartesian product)
+    @Test("Extract with multiple brace groups cartesian product")
+    func testExtractWithMultipleBraceGroups() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create subtree with structure for cartesian product: {src,test}/{foo,bar}.swift
+        let subtreePrefix = "vendor/lib"
+        let dirs = [
+            "\(subtreePrefix)/src",
+            "\(subtreePrefix)/test"
+        ]
+        for dir in dirs {
+            try FileManager.default.createDirectory(
+                atPath: fixture.path.string + "/" + dir,
+                withIntermediateDirectories: true
+            )
+        }
+        
+        // Create 4 files: src/foo.swift, src/bar.swift, test/foo.swift, test/bar.swift
+        try "src-foo".write(toFile: fixture.path.string + "/" + subtreePrefix + "/src/foo.swift",
+                           atomically: true, encoding: .utf8)
+        try "src-bar".write(toFile: fixture.path.string + "/" + subtreePrefix + "/src/bar.swift",
+                           atomically: true, encoding: .utf8)
+        try "test-foo".write(toFile: fixture.path.string + "/" + subtreePrefix + "/test/foo.swift",
+                            atomically: true, encoding: .utf8)
+        try "test-bar".write(toFile: fixture.path.string + "/" + subtreePrefix + "/test/bar.swift",
+                            atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Extract using brace expansion with cartesian product
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "--from", "{src,test}/{foo,bar}.swift", "--to", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode == 0, "Should succeed with cartesian product: \(result.stderr)")
+        
+        // Verify all 4 files were extracted
+        let files = [
+            "output/src/foo.swift",
+            "output/src/bar.swift",
+            "output/test/foo.swift",
+            "output/test/bar.swift"
+        ]
+        
+        for file in files {
+            let exists = FileManager.default.fileExists(atPath: fixture.path.string + "/" + file)
+            #expect(exists, "Should extract \(file)")
+        }
+        
+        // Verify stdout mentions 4 files
+        #expect(result.stdout.contains("4 file"), "Should report 4 files extracted")
+    }
+    
+    // T036: Extract error on empty alternative pattern
+    @Test("Extract error on empty alternative pattern")
+    func testExtractErrorOnEmptyAlternative() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+        
+        // Create minimal subtree
+        let subtreePrefix = "vendor/lib"
+        try FileManager.default.createDirectory(
+            atPath: fixture.path.string + "/" + subtreePrefix,
+            withIntermediateDirectories: true
+        )
+        try "content".write(toFile: fixture.path.string + "/" + subtreePrefix + "/file.swift",
+                           atomically: true, encoding: .utf8)
+        
+        // Create config
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+        
+        // Commit
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Initial commit"])
+        
+        // Try to extract using pattern with empty alternative
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib", "--from", "{a,}/*.swift", "--to", "output/"],
+            workingDirectory: fixture.path
+        )
+        
+        #expect(result.exitCode != 0, "Should fail with empty alternative pattern")
+        #expect(result.stderr.contains("empty") || result.stderr.contains("Empty"),
+                "Error should mention empty alternative: \(result.stderr)")
+    }
 }
