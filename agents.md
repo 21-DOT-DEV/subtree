@@ -1,12 +1,12 @@
 # AI Agent Guide: Subtree CLI
 
-**Last Updated**: 2025-11-28 | **Phase**: 009-multi-pattern-extraction (Complete) | **Status**: Production-ready with Multi-Pattern Extraction
+**Last Updated**: 2025-11-29 | **Phase**: 010-extract-clean (Complete) | **Status**: Production-ready with Extract Clean Mode
 
 ## What This Project Is
 
 A Swift 6.1 command-line tool for managing git subtrees with declarative YAML configuration. Think "git submodule" but with subtrees, plus automatic config tracking and file extraction.
 
-**Current Reality**: Init + Add + Remove + Update + Extract commands complete - Production-ready with 439 passing tests.
+**Current Reality**: Init + Add + Remove + Update + Extract (with clean mode) commands complete - Production-ready with 477 passing tests.
 
 ## Current State (5 Commands Complete)
 
@@ -17,10 +17,10 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 - **Add command** (PRODUCTION-READY - adds subtrees with atomic commits, smart defaults, full validation)
 - **Update command** (PRODUCTION-READY - updates subtrees with case-insensitive lookup, atomic commits)
 - **Remove command** (PRODUCTION-READY - removes subtrees with case-insensitive lookup, atomic commits)
-- **Extract command** (PRODUCTION-READY - extract files with glob patterns, persistent mappings, bulk execution)
+- **Extract command** (PRODUCTION-READY - extract files with glob patterns, persistent mappings, bulk execution, clean mode)
 - **1 stub command** (validate - prints "not yet implemented")
 - **Full CLI** (`subtree --help`, all command help screens work perfectly)
-- **Test suite** (439/439 tests pass: comprehensive integration + unit tests)
+- **Test suite** (477/477 tests pass: comprehensive integration + unit tests)
 - **Git test fixtures** (GitRepositoryFixture with UUID-based temp directories, async)
 - **Git verification helpers** (TestHarness for CLI execution, git state validation)
 - **Test infrastructure** (TestHarness with swift-subprocess, async/await, black-box testing)
@@ -114,8 +114,35 @@ A Swift 6.1 command-line tool for managing git subtrees with declarative YAML co
 - Emoji prefixes for all output (❌/✅/ℹ️/📊/📝/⚠️)
 - Appropriate exit codes (0=success, 1=user error, 2=system error, 3=config error)
 
+### ✅ Extract Clean Mode Features (Complete - 5 User Stories)
+**US1 - Ad-hoc Clean with Checksum Validation**:
+- `--clean` flag removes previously extracted files
+- Checksum validation via `git hash-object` prevents accidental deletion
+- Empty directory pruning up to destination root
+- Fail-fast on first checksum mismatch
+
+**US2 - Force Clean Override**:
+- `--force` bypasses checksum validation
+- Removes files even when source is missing
+- Bypasses subtree prefix validation
+
+**US3 - Bulk Clean from Persisted Mappings**:
+- `--clean --name` cleans all mappings for one subtree
+- `--clean --all` cleans all mappings for all subtrees
+- Continue-on-error with failure summary
+- Exit code priority (highest severity wins)
+
+**US4 - Multi-Pattern Clean**:
+- Multiple `--from` patterns supported
+- `--exclude` patterns filter removals
+- Feature parity with extraction
+
+**US5 - Error Handling**:
+- Clear error messages with actionable suggestions
+- Appropriate exit codes (0=success, 1=validation, 2=user error, 3=I/O)
+
 ### ⏳ What's Next
-- Implement validate command
+- Implement lint/validate command
 - Additional enhancements and polish
 
 ## Architecture Overview
@@ -144,19 +171,19 @@ This project follows **strict constitutional governance**. Every feature:
 
 ### For Understanding the Project
 - **README.md**: Human-readable project overview, current phase status
-- **specs/009-multi-pattern-extraction/spec.md**: Multi-Pattern Extraction requirements (latest feature)
+- **specs/010-extract-clean/spec.md**: Extract Clean Mode requirements (latest feature)
 - **specs/008-extract-command/plan.md**: Technical approach and architecture decisions
 - **.specify/memory/constitution.md**: Governance principles (NON-NEGOTIABLE)
 
 ### For Implementation Guidance
-- **specs/009-multi-pattern-extraction/tasks.md**: Step-by-step task list (48 tasks complete)
+- **specs/010-extract-clean/tasks.md**: Step-by-step task list (69 tasks complete)
 - **specs/008-extract-command/contracts/**: Command contracts and test standards
 - **specs/008-extract-command/data-model.md**: Configuration models (ExtractionMapping)
 - **.windsurf/rules/**: Windsurf-specific patterns (architecture, ci-cd, compliance)
 
 ### For Validation
 - **specs/008-extract-command/checklists/requirements.md**: Spec quality validation
-- **Test suite**: 439 tests covering all commands and features
+- **Test suite**: 477 tests covering all commands and features
 
 ## Tech Stack
 
@@ -183,20 +210,20 @@ This project follows **strict constitutional governance**. Every feature:
 
 ### If You're Implementing Code
 1. Read current phase status in README.md
-2. Check specs/001-cli-bootstrap/tasks.md for active tasks
+2. Check `.specify/memory/roadmap/` for next planned feature
 3. Follow TDD: write tests → verify fail → implement → verify pass
 4. Consult .windsurf/rules/bootstrap.md for conventions
 5. Update README.md and agents.md (this file) after phase completes
 
 ### If You're Analyzing/Planning
 1. Check .specify/memory/constitution.md for governance
-2. Review specs/001-cli-bootstrap/spec.md for requirements
-3. Examine specs/001-cli-bootstrap/plan.md for technical decisions
+2. Review current feature's spec.md for requirements
+3. Examine plan.md for technical decisions
 4. Verify constitutional compliance before suggesting changes
 
 ### If You're Debugging
-1. Check specs/001-cli-bootstrap/quickstart.md for validation commands
-2. Run validation checkpoint in .windsurf/rules/bootstrap.md
+1. Check current feature's quickstart.md for validation commands
+2. Run `swift test` to verify all tests pass
 3. Verify Package.swift matches documented structure
 4. Ensure all directories exist: `ls -la Sources/ Tests/`
 
@@ -218,20 +245,20 @@ This project follows **strict constitutional governance**. Every feature:
 - **Case-Insensitive Names (007)**: Validation across all commands ✅
 - **Extract Command (008)**: All 5 user stories complete ✅
 - **Multi-Pattern Extraction (009)**: All 5 user stories complete ✅
-  - Phase 1-2: Data model (ExtractionMapping array support) ✅
-  - Phase 3: Multiple --from CLI patterns ✅
-  - Phase 4: Persist + Excludes ✅
-  - Phase 5: Zero-match warnings ✅
-  - Phase 6: Polish & documentation ✅
+- **Extract Clean Mode (010)**: All 5 user stories complete ✅
+  - Phase 1-2: Setup + Foundational (GitOperations.hashObject, DirectoryPruner) ✅
+  - Phase 3-4: Ad-hoc clean + Force override (MVP) ✅
+  - Phase 5-6: Bulk clean + Multi-pattern clean ✅
+  - Phase 7-8: Error handling + Polish ✅
 
 **Keep synchronized with**:
 - README.md (status, build instructions, usage examples)
 - .windsurf/rules/ (architecture, ci-cd, compliance patterns)
-- specs/009-multi-pattern-extraction/tasks.md (task completion status)
+- .specify/memory/roadmap/ (phase progress)
 
 ---
 
 **For Humans**: See README.md  
 **For Windsurf**: See .windsurf/rules/ (architecture, ci-cd, compliance)  
 **For Governance**: See .specify/memory/constitution.md  
-**For Requirements**: See specs/009-multi-pattern-extraction/spec.md (latest feature)
+**For Requirements**: See specs/010-extract-clean/spec.md (latest feature)
