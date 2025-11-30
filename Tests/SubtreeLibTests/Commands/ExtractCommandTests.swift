@@ -208,20 +208,20 @@ struct ExtractCommandTests {
         // Test with no exclusions
         let mapping1 = ExtractionMapping(from: "**/*.md", to: "docs/", exclude: nil)
         #expect(mapping1.from == ["**/*.md"])
-        #expect(mapping1.to == "docs/")
+        #expect(mapping1.to == ["docs/"])
         #expect(mapping1.exclude == nil)
         
         // Test with empty exclusions
         let mapping2 = ExtractionMapping(from: "**/*.c", to: "src/", exclude: [])
         #expect(mapping2.from == ["**/*.c"])
-        #expect(mapping2.to == "src/")
+        #expect(mapping2.to == ["src/"])
         #expect(mapping2.exclude?.isEmpty == true)
         
         // Test with multiple exclusions
         let excludes = ["**/test/**", "**/bench/**"]
         let mapping3 = ExtractionMapping(from: "src/**/*.c", to: "Sources/", exclude: excludes)
         #expect(mapping3.from == ["src/**/*.c"])
-        #expect(mapping3.to == "Sources/")
+        #expect(mapping3.to == ["Sources/"])
         #expect(mapping3.exclude?.count == 2)
         #expect(mapping3.exclude?.contains("**/test/**") == true)
         #expect(mapping3.exclude?.contains("**/bench/**") == true)

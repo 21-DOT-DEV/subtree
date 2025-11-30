@@ -18,7 +18,7 @@ struct ExtractionMappingTests {
     func testExtractionMappingInit() {
         let mapping = ExtractionMapping(from: "src/**/*.h", to: "include/")
         #expect(mapping.from == ["src/**/*.h"], "Single pattern should be wrapped in array")
-        #expect(mapping.to == "include/")
+        #expect(mapping.to == ["include/"])
         #expect(mapping.exclude == nil)
     }
     
@@ -39,7 +39,7 @@ struct ExtractionMappingTests {
         
         #expect(decoded == original)
         #expect(decoded.from == ["docs/**/*.md"])
-        #expect(decoded.to == "project-docs/")
+        #expect(decoded.to == ["project-docs/"])
         #expect(decoded.exclude == ["docs/internal/**"])
     }
     
@@ -114,7 +114,7 @@ struct ExtractionMappingTests {
         let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
         
         #expect(mapping.from == ["docs/**/*.md"], "String should be wrapped in array")
-        #expect(mapping.to == "project-docs/")
+        #expect(mapping.to == ["project-docs/"])
         #expect(mapping.exclude == ["docs/internal/**", "docs/draft*.md"])
     }
     
@@ -130,7 +130,7 @@ struct ExtractionMappingTests {
         let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
         
         #expect(mapping.from == ["templates/**"])
-        #expect(mapping.to == ".templates/")
+        #expect(mapping.to == [".templates/"])
         #expect(mapping.exclude == nil)
     }
     
@@ -148,7 +148,7 @@ struct ExtractionMappingTests {
         let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
         
         #expect(mapping.from == ["include/**/*.h"], "Single string should be wrapped in array")
-        #expect(mapping.to == "vendor/headers/")
+        #expect(mapping.to == ["vendor/headers/"])
         #expect(mapping.exclude == nil)
     }
     
@@ -166,7 +166,7 @@ struct ExtractionMappingTests {
         let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
         
         #expect(mapping.from == ["include/**/*.h", "src/**/*.c"], "Array should be preserved")
-        #expect(mapping.to == "vendor/source/")
+        #expect(mapping.to == ["vendor/source/"])
     }
     
     // T005: Encode single pattern as string
@@ -239,7 +239,7 @@ struct ExtractionMappingTests {
         let mapping = ExtractionMapping(from: "docs/**/*.md", to: "output/", exclude: ["**/internal/**"])
         
         #expect(mapping.from == ["docs/**/*.md"], "Single pattern should be wrapped in array")
-        #expect(mapping.to == "output/")
+        #expect(mapping.to == ["output/"])
         #expect(mapping.exclude == ["**/internal/**"])
     }
     
@@ -250,7 +250,7 @@ struct ExtractionMappingTests {
         let mapping = ExtractionMapping(fromPatterns: patterns, to: "vendor/", exclude: nil)
         
         #expect(mapping.from == patterns, "Patterns should be preserved")
-        #expect(mapping.to == "vendor/")
+        #expect(mapping.to == ["vendor/"])
         #expect(mapping.exclude == nil)
     }
     
@@ -270,7 +270,157 @@ struct ExtractionMappingTests {
         let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
         
         #expect(mapping.from == ["src/**/*.c"])
-        #expect(mapping.to == "vendor/")
+        #expect(mapping.to == ["vendor/"])
         #expect(mapping.exclude == ["**/test_*", "**/internal/**"])
+    }
+    
+    // MARK: - Multi-Destination (012-multi-destination-extraction)
+    
+    // T012: Decode single string format `to: "path/"`
+    @Test("Decode single string format to: path/")
+    func testDecodeSingleStringToFormat() throws {
+        let yaml = """
+        from: "include/**/*.h"
+        to: "vendor/headers/"
+        """
+        
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+        
+        #expect(mapping.from == ["include/**/*.h"])
+        #expect(mapping.to == ["vendor/headers/"], "Single string should be wrapped in array")
+    }
+    
+    // T013: Decode array format `to: ["p1/", "p2/"]`
+    @Test("Decode array format to: [p1/, p2/]")
+    func testDecodeArrayToFormat() throws {
+        let yaml = """
+        from: "include/**/*.h"
+        to:
+          - "Lib/headers/"
+          - "Vendor/headers/"
+        """
+        
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+        
+        #expect(mapping.from == ["include/**/*.h"])
+        #expect(mapping.to == ["Lib/headers/", "Vendor/headers/"], "Array should be preserved")
+    }
+    
+    // T014: Encode single destination as string
+    @Test("Encode single destination as string format")
+    func testEncodeSingleDestinationAsString() throws {
+        let mapping = ExtractionMapping(from: "include/**/*.h", to: "vendor/")
+        
+        let encoder = YAMLEncoder()
+        let yaml = try encoder.encode(mapping)
+        
+        // Single destination should encode as string, not array
+        #expect(yaml.contains("to: vendor/") || yaml.contains("to: \"vendor/\""),
+                "Single destination should encode as string, not array. Got: \(yaml)")
+        #expect(!yaml.contains("- vendor"), "Should not encode as array")
+    }
+    
+    // T015: Encode multiple destinations as array
+    @Test("Encode multiple destinations as array format")
+    func testEncodeMultipleDestinationsAsArray() throws {
+        let mapping = ExtractionMapping(from: "include/**/*.h", toDestinations: ["Lib/", "Vendor/"])
+        
+        let encoder = YAMLEncoder()
+        let yaml = try encoder.encode(mapping)
+        
+        // Multiple destinations should encode as array
+        #expect(yaml.contains("- Lib/") || yaml.contains("- \"Lib/\""),
+                "Multiple destinations should encode as array. Got: \(yaml)")
+        #expect(yaml.contains("- Vendor/") || yaml.contains("- \"Vendor/\""),
+                "Multiple destinations should encode as array. Got: \(yaml)")
+    }
+    
+    // T016: Reject empty array `to: []`
+    @Test("Reject empty array to: []")
+    func testRejectEmptyToArray() throws {
+        let yaml = """
+        from: "include/**/*.h"
+        to: []
+        """
+        
+        let decoder = YAMLDecoder()
+        
+        #expect(throws: Error.self) {
+            _ = try decoder.decode(ExtractionMapping.self, from: yaml)
+        }
+    }
+    
+    // T017: Single-destination initializer works
+    @Test("Single-destination initializer wraps string in array")
+    func testSingleDestinationInitializerWrapsInArray() {
+        let mapping = ExtractionMapping(from: "docs/**/*.md", to: "output/", exclude: ["**/internal/**"])
+        
+        #expect(mapping.from == ["docs/**/*.md"])
+        #expect(mapping.to == ["output/"], "Single destination should be wrapped in array")
+        #expect(mapping.exclude == ["**/internal/**"])
+    }
+    
+    // T018: Multi-destination initializer works
+    @Test("Multi-destination initializer preserves array")
+    func testMultiDestinationInitializer() {
+        let destinations = ["Lib/", "Vendor/", "Backup/"]
+        let mapping = ExtractionMapping(from: "include/**/*.h", toDestinations: destinations, exclude: nil)
+        
+        #expect(mapping.from == ["include/**/*.h"])
+        #expect(mapping.to == destinations, "Destinations should be preserved")
+        #expect(mapping.exclude == nil)
+    }
+    
+    // T018b: Verify Yams coercion of non-string elements in `to`
+    @Test("Array with mixed types in to is handled by Yams coercion")
+    func testMixedTypesToHandledByYams() throws {
+        // YAML with integer in array - Yams coerces to string
+        let yaml = """
+        from: "valid/pattern"
+        to:
+          - "Lib/"
+          - 123
+        """
+        
+        let decoder = YAMLDecoder()
+        // Yams coerces 123 to "123", so this actually succeeds
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+        #expect(mapping.to == ["Lib/", "123"], "Yams coerces integers to strings")
+    }
+    
+    // Additional: Combined multi-pattern + multi-destination
+    @Test("Combined multi-pattern and multi-destination")
+    func testCombinedMultiPatternMultiDestination() throws {
+        let yaml = """
+        from:
+          - "include/**/*.h"
+          - "src/**/*.c"
+        to:
+          - "Lib/"
+          - "Vendor/"
+        exclude:
+          - "**/test/**"
+        """
+        
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+        
+        #expect(mapping.from == ["include/**/*.h", "src/**/*.c"])
+        #expect(mapping.to == ["Lib/", "Vendor/"])
+        #expect(mapping.exclude == ["**/test/**"])
+    }
+    
+    // Additional: Multi-pattern + multi-destination initializer
+    @Test("Multi-pattern multi-destination initializer")
+    func testMultiPatternMultiDestinationInitializer() {
+        let patterns = ["include/**/*.h", "src/**/*.c"]
+        let destinations = ["Lib/", "Vendor/"]
+        let mapping = ExtractionMapping(fromPatterns: patterns, toDestinations: destinations, exclude: ["**/internal/**"])
+        
+        #expect(mapping.from == patterns)
+        #expect(mapping.to == destinations)
+        #expect(mapping.exclude == ["**/internal/**"])
     }
 }
