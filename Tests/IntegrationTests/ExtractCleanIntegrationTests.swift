@@ -5,7 +5,6 @@ import System
 #else
 import SystemPackage
 #endif
-@testable import SubtreeLib
 
 /// Integration tests for Extract Clean Mode
 ///
