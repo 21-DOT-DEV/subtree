@@ -178,6 +178,65 @@ public enum GitOperations {
         return String(hash)
     }
     
+    /// Query remote repository for all tags
+    /// - Parameter remote: Git remote URL
+    /// - Returns: Array of (tagName, commitHash) tuples sorted by semver (latest first)
+    /// - Throws: GitError if command fails
+    public static func lsRemoteTags(remote: String) async throws -> [(tag: String, commit: String)] {
+        let result = try await run(arguments: ["ls-remote", "--tags", "--refs", remote])
+        guard result.exitCode == 0 else {
+            throw GitError.commandFailed("git ls-remote --tags failed: \(result.stderr)")
+        }
+        
+        // Parse output: "HASH\trefs/tags/TAG"
+        var tags: [(tag: String, commit: String)] = []
+        let lines = result.stdout.split(separator: "\n")
+        for line in lines {
+            let components = line.split(separator: "\t", maxSplits: 1)
+            guard components.count == 2 else { continue }
+            let hash = String(components[0])
+            let refPath = String(components[1])
+            // Extract tag name from refs/tags/TAG
+            if let tagName = refPath.split(separator: "/").last {
+                tags.append((tag: String(tagName), commit: hash))
+            }
+        }
+        
+        // Sort by semver (latest first)
+        return tags.sorted { lhs, rhs in
+            compareSemver(lhs.tag, rhs.tag) == .orderedDescending
+        }
+    }
+    
+    /// Compare two version strings using semver-like comparison
+    /// Handles formats: "1.2.3", "v1.2.3", "1.2.3-beta", etc.
+    private static func compareSemver(_ lhs: String, _ rhs: String) -> ComparisonResult {
+        // Strip leading 'v' or 'V' if present
+        let lhsClean = lhs.hasPrefix("v") || lhs.hasPrefix("V") ? String(lhs.dropFirst()) : lhs
+        let rhsClean = rhs.hasPrefix("v") || rhs.hasPrefix("V") ? String(rhs.dropFirst()) : rhs
+        
+        // Split by common delimiters
+        let lhsParts = lhsClean.split { $0 == "." || $0 == "-" || $0 == "_" }
+        let rhsParts = rhsClean.split { $0 == "." || $0 == "-" || $0 == "_" }
+        
+        let maxCount = max(lhsParts.count, rhsParts.count)
+        for i in 0..<maxCount {
+            let lhsPart = i < lhsParts.count ? String(lhsParts[i]) : "0"
+            let rhsPart = i < rhsParts.count ? String(rhsParts[i]) : "0"
+            
+            // Try numeric comparison first
+            if let lhsNum = Int(lhsPart), let rhsNum = Int(rhsPart) {
+                if lhsNum < rhsNum { return .orderedAscending }
+                if lhsNum > rhsNum { return .orderedDescending }
+            } else {
+                // Fall back to string comparison
+                let comparison = lhsPart.compare(rhsPart)
+                if comparison != .orderedSame { return comparison }
+            }
+        }
+        return .orderedSame
+    }
+    
     // T008: Git rev-list --count wrapper for commit counting
     /// Count commits between two refs
     /// - Parameters:

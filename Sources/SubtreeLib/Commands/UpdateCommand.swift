@@ -59,6 +59,9 @@ public struct UpdateCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Check for updates without modifying repository (exit 5 if updates available)")
     var report: Bool = false
     
+    @Option(name: .long, help: "Specific ref (tag, branch, or commit) to update to")
+    var ref: String?
+    
     public init() {}
     
     // T039: Mutual exclusion validation
@@ -151,25 +154,80 @@ public struct UpdateCommand: AsyncParsableCommand {
             Foundation.exit(1)
         }
         
-        // T018: Update detection logic using git ls-remote
+        // Determine target ref and commit
         let currentCommit = entry.commit
-        let ref = entry.tag ?? entry.branch ?? "main"
-        let remoteCommit: String
-        do {
-            remoteCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: ref)
-        } catch {
-            print("❌ Failed to query remote: \(error)")
-            Foundation.exit(1)
+        let oldTag = entry.tag
+        var targetRef: String
+        var targetCommit: String
+        var newTag: String? = entry.tag
+        var newBranch: String? = entry.branch
+        
+        if let explicitRef = ref {
+            // User specified --ref, use it directly
+            targetRef = explicitRef
+            do {
+                targetCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: explicitRef)
+            } catch {
+                print("❌ Failed to resolve ref '\(explicitRef)': \(error)")
+                Foundation.exit(1)
+            }
+            // Determine if the explicit ref is a tag or branch
+            // Check if it matches a tag on remote
+            let remoteTags = try? await GitOperations.lsRemoteTags(remote: entry.remote)
+            if let tags = remoteTags, tags.contains(where: { $0.tag == explicitRef }) {
+                newTag = explicitRef
+                newBranch = nil
+            } else {
+                // Assume it's a branch
+                newTag = nil
+                newBranch = explicitRef
+            }
+        } else if entry.tag != nil {
+            // Configured with a tag - auto-detect latest tag
+            do {
+                let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
+                guard let latestTag = remoteTags.first else {
+                    print("❌ No tags found on remote")
+                    Foundation.exit(1)
+                }
+                targetRef = latestTag.tag
+                targetCommit = latestTag.commit
+                newTag = latestTag.tag
+            } catch {
+                print("❌ Failed to query remote tags: \(error)")
+                Foundation.exit(1)
+            }
+        } else {
+            // Configured with a branch - get latest commit on that branch
+            targetRef = entry.branch ?? "main"
+            do {
+                targetCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: targetRef)
+            } catch {
+                print("❌ Failed to query remote: \(error)")
+                Foundation.exit(1)
+            }
         }
         
         // T019: Implement "already up-to-date" path (exit 0)
-        if currentCommit == remoteCommit {
+        if currentCommit == targetCommit {
             print("✅ \(entry.name) is already up to date")
             return
         }
         
         // T023: User-facing output messages
-        print("🔄 Updating subtree \(entry.name)...")
+        let versionInfo: String
+        if let oldT = oldTag, let newT = newTag, oldT != newT {
+            versionInfo = " (\(oldT) → \(newT))"
+        } else if let newT = newTag {
+            versionInfo = " (tag: \(newT))"
+        } else {
+            versionInfo = ""
+        }
+        print("🔄 Updating subtree \(entry.name)\(versionInfo)...")
+        
+        // Record HEAD before subtree pull to check if it creates a commit
+        let headBefore = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
+        let headBeforeCommit = headBefore.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // T020: Atomic update using git subtree pull
         let useSquash = !noSquash
@@ -177,7 +235,7 @@ public struct UpdateCommand: AsyncParsableCommand {
             _ = try await GitOperations.subtreePull(
                 prefix: entry.prefix,
                 remote: entry.remote,
-                ref: ref,
+                ref: targetRef,
                 squash: useSquash
             )
         } catch {
@@ -185,16 +243,21 @@ public struct UpdateCommand: AsyncParsableCommand {
             Foundation.exit(1)
         }
         
-        // T021: Config update (new commit hash) after successful update
+        // Check if subtree pull created a new commit
+        let headAfter = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
+        let headAfterCommit = headAfter.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subtreePullCreatedCommit = headBeforeCommit != headAfterCommit
+        
+        // T021: Config update (new commit hash AND new tag if changed) after successful update
         let updatedSubtrees = config.subtrees.map { subtree in
             if subtree.name == entry.name {
                 return SubtreeEntry(
                     name: subtree.name,
                     remote: subtree.remote,
                     prefix: subtree.prefix,
-                    commit: remoteCommit,
-                    tag: subtree.tag,
-                    branch: subtree.branch,
+                    commit: targetCommit,
+                    tag: newTag,
+                    branch: newBranch,
                     squash: subtree.squash,
                     extracts: subtree.extracts
                 )
@@ -217,28 +280,40 @@ public struct UpdateCommand: AsyncParsableCommand {
             Foundation.exit(1)
         }
         
-        // T022: Tag-aware commit message formatting for updates
+        // T022: Tag-aware commit message formatting for updates (with version transition)
         let commitMessage = formatUpdateCommitMessage(
             entry: entry,
             oldCommit: currentCommit,
-            newCommit: remoteCommit,
+            newCommit: targetCommit,
+            oldTag: oldTag,
+            newTag: newTag,
             squash: useSquash
         )
         
         // Write commit message to temp file
         let tempMessageFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("subtree-update-msg-\(UUID().uuidString).txt")
-        try commitMessage.write(to: tempMessageFile, atomically: true, encoding: .utf8)
+        try commitMessage.write(to: tempMessageFile, atomically: true, encoding: String.Encoding.utf8)
         defer { try? FileManager.default.removeItem(at: tempMessageFile) }
         
-        // Amend the commit to include config changes (atomic commit)
-        let amendResult = try await GitOperations.run(arguments: [
-            "commit", "--amend", "-F", tempMessageFile.path
-        ])
+        // Commit strategy: amend only if subtree pull created a commit, otherwise create new commit
+        let commitResult: (stdout: String, stderr: String, exitCode: Int)
+        if subtreePullCreatedCommit {
+            // Amend the subtree pull commit to include config changes
+            commitResult = try await GitOperations.run(arguments: [
+                "commit", "--amend", "-F", tempMessageFile.path
+            ])
+        } else {
+            // Subtree pull didn't create a commit (e.g., "Already up to date" from git's perspective)
+            // Create a new commit for config changes only
+            commitResult = try await GitOperations.run(arguments: [
+                "commit", "-F", tempMessageFile.path
+            ])
+        }
         
-        if amendResult.exitCode != 0 {
-            print("⚠️  Subtree updated but failed to update config in commit.")
-            print("Manually edit subtree.yaml to update commit hash, then run: git commit --amend")
+        if commitResult.exitCode != 0 {
+            print("⚠️  Subtree updated but failed to commit config changes.")
+            print("Manually commit subtree.yaml: git commit -m 'Update \(entry.name) config'")
             Foundation.exit(1)
         }
         
@@ -299,37 +374,74 @@ public struct UpdateCommand: AsyncParsableCommand {
             throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Working tree has uncommitted changes"])
         }
         
-        // Check for updates
+        // Determine target ref and commit (same logic as runSingleUpdate)
         let currentCommit = entry.commit
-        let ref = entry.tag ?? entry.branch ?? "main"
-        let remoteCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: ref)
+        let oldTag = entry.tag
+        var targetRef: String
+        var targetCommit: String
+        var newTag: String? = entry.tag
+        let newBranch: String? = entry.branch
+        
+        if entry.tag != nil {
+            // Configured with a tag - auto-detect latest tag
+            let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
+            guard let latestTag = remoteTags.first else {
+                throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No tags found on remote"])
+            }
+            targetRef = latestTag.tag
+            targetCommit = latestTag.commit
+            newTag = latestTag.tag
+        } else {
+            // Configured with a branch - get latest commit on that branch
+            targetRef = entry.branch ?? "main"
+            targetCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: targetRef)
+        }
         
         // Skip if up-to-date
-        if currentCommit == remoteCommit {
+        if currentCommit == targetCommit {
             print("⏭  \(entry.name) is already up to date")
             return false
         }
         
+        // User-facing output
+        let versionInfo: String
+        if let oldT = oldTag, let newT = newTag, oldT != newT {
+            versionInfo = " (\(oldT) → \(newT))"
+        } else if let newT = newTag {
+            versionInfo = " (tag: \(newT))"
+        } else {
+            versionInfo = ""
+        }
+        print("🔄 Updating \(entry.name)\(versionInfo)...")
+        
+        // Record HEAD before subtree pull
+        let headBefore = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
+        let headBeforeCommit = headBefore.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         // Perform update
-        print("🔄 Updating \(entry.name)...")
         let useSquash = !noSquash
         _ = try await GitOperations.subtreePull(
             prefix: entry.prefix,
             remote: entry.remote,
-            ref: ref,
+            ref: targetRef,
             squash: useSquash
         )
         
-        // Update config
+        // Check if subtree pull created a new commit
+        let headAfter = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
+        let headAfterCommit = headAfter.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subtreePullCreatedCommit = headBeforeCommit != headAfterCommit
+        
+        // Update config (commit AND tag if changed)
         let updatedSubtrees = config.subtrees.map { subtree in
             if subtree.name == entry.name {
                 return SubtreeEntry(
                     name: subtree.name,
                     remote: subtree.remote,
                     prefix: subtree.prefix,
-                    commit: remoteCommit,
-                    tag: subtree.tag,
-                    branch: subtree.branch,
+                    commit: targetCommit,
+                    tag: newTag,
+                    branch: newBranch,
                     squash: subtree.squash,
                     extracts: subtree.extracts
                 )
@@ -341,24 +453,34 @@ public struct UpdateCommand: AsyncParsableCommand {
         try await ConfigFileManager.writeConfig(updatedConfig, to: configPath)
         _ = try await GitOperations.run(arguments: ["add", "subtree.yaml"])
         
-        // Commit with message
+        // Commit with message (with version transition)
         let commitMessage = formatUpdateCommitMessage(
             entry: entry,
             oldCommit: currentCommit,
-            newCommit: remoteCommit,
+            newCommit: targetCommit,
+            oldTag: oldTag,
+            newTag: newTag,
             squash: useSquash
         )
         let tempMessageFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("subtree-update-msg-\(UUID().uuidString).txt")
-        try commitMessage.write(to: tempMessageFile, atomically: true, encoding: .utf8)
+        try commitMessage.write(to: tempMessageFile, atomically: true, encoding: String.Encoding.utf8)
         defer { try? FileManager.default.removeItem(at: tempMessageFile) }
         
-        let amendResult = try await GitOperations.run(arguments: [
-            "commit", "--amend", "-F", tempMessageFile.path
-        ])
+        // Commit strategy: amend only if subtree pull created a commit
+        let commitResult: (stdout: String, stderr: String, exitCode: Int)
+        if subtreePullCreatedCommit {
+            commitResult = try await GitOperations.run(arguments: [
+                "commit", "--amend", "-F", tempMessageFile.path
+            ])
+        } else {
+            commitResult = try await GitOperations.run(arguments: [
+                "commit", "-F", tempMessageFile.path
+            ])
+        }
         
-        guard amendResult.exitCode == 0 else {
-            throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to amend commit"])
+        guard commitResult.exitCode == 0 else {
+            throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to commit config changes"])
         }
         
         print("✅ Updated \(entry.name)")
@@ -410,30 +532,44 @@ public struct UpdateCommand: AsyncParsableCommand {
         Foundation.exit(hasUpdates ? 5 : 0)
     }
     
-    // T022: Tag-aware commit message formatting
+    // T022: Tag-aware commit message formatting with version transition
     private func formatUpdateCommitMessage(
         entry: SubtreeEntry,
         oldCommit: String,
         newCommit: String,
+        oldTag: String?,
+        newTag: String?,
         squash: Bool
     ) -> String {
-        let ref = entry.tag ?? entry.branch ?? "main"
-        let isTag = CommitMessageFormatter.isTagRef(ref)
         let shortOld = CommitMessageFormatter.shortHash(from: oldCommit)
         let shortNew = CommitMessageFormatter.shortHash(from: newCommit)
         let squashMode = squash ? "squashed" : "non-squashed"
         
-        if isTag {
-            // Tag format: "Update subtree <name> (v1.2.0 -> v1.3.0)"
-            return """
-            Update subtree \(entry.name) (tag)
+        if let newT = newTag {
+            // Tag format with version transition
+            let titleSuffix: String
+            if let oldT = oldTag, oldT != newT {
+                titleSuffix = " (\(oldT) → \(newT))"
+            } else {
+                titleSuffix = " (tag: \(newT))"
+            }
             
-            - Updated to tag: \(ref) (commit: \(shortNew))
-            - Previous commit: \(shortOld)
-            - From: \(entry.remote)
-            - In: \(entry.prefix)
-            - Mode: \(squashMode)
-            """
+            var lines = [
+                "Update subtree \(entry.name)\(titleSuffix)",
+                "",
+                "- Updated to tag: \(newT) (commit: \(shortNew))"
+            ]
+            if let oldT = oldTag, oldT != newT {
+                lines.append("- Previous tag: \(oldT) (commit: \(shortOld))")
+            } else {
+                lines.append("- Previous commit: \(shortOld)")
+            }
+            lines.append(contentsOf: [
+                "- From: \(entry.remote)",
+                "- In: \(entry.prefix)",
+                "- Mode: \(squashMode)"
+            ])
+            return lines.joined(separator: "\n")
         } else {
             // Branch format: "Update subtree <name>"
             return """
