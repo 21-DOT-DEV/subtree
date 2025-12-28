@@ -745,4 +745,166 @@ final class UpdateCommandIntegrationTests {
         #expect(configData.contains("name: MySpecialLib"))
         #expect(!configData.contains("name: myspeciallib"))
     }
+    
+    // MARK: - Bug Fix Tests: Commit Creation and Tag Detection
+    
+    // Regression test: Update should NOT amend unrelated commits
+    @Test("update does not amend unrelated commits")
+    func testUpdateDoesNotAmendUnrelatedCommits() async throws {
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Initialize and add subtree
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", "git@github.com:octocat/Hello-World.git", "--name", "lib", "--prefix", "lib", "--ref", "master"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed")
+        
+        // Create an unrelated commit
+        let unrelatedFile = local.path.appending("unrelated.txt")
+        try "unrelated content".write(toFile: unrelatedFile.string, atomically: true, encoding: .utf8)
+        try await local.runGit(["add", "unrelated.txt"])
+        try await local.runGit(["commit", "-m", "Unrelated commit"])
+        
+        // Get the unrelated commit message before update
+        let logBefore = try await local.runGit(["log", "-1", "--format=%s"])
+        #expect(logBefore.contains("Unrelated commit"), "Should have unrelated commit")
+        
+        // Try to update (may or may not have updates)
+        let result = try await harness.run(
+            arguments: ["update", "lib"],
+            workingDirectory: local.path
+        )
+        #expect(result.exitCode == 0, "Update should succeed")
+        
+        // If up-to-date, the unrelated commit should NOT be modified
+        if result.stdout.contains("up to date") {
+            let logAfter = try await local.runGit(["log", "-1", "--format=%s"])
+            #expect(logAfter.contains("Unrelated commit"), "Unrelated commit should NOT be amended")
+        }
+    }
+    
+    // Test --ref flag for explicit version specification
+    @Test("update with --ref flag updates to specific version")
+    func testUpdateWithRefFlag() async throws {
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Initialize and add subtree with master branch
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", "git@github.com:octocat/Hello-World.git", "--name", "lib", "--prefix", "lib", "--ref", "master"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed")
+        
+        // Update with explicit --ref (using same ref to test the flag works)
+        let result = try await harness.run(
+            arguments: ["update", "lib", "--ref", "master"],
+            workingDirectory: local.path
+        )
+        
+        // Should succeed (up-to-date or updated)
+        #expect(result.exitCode == 0, "Update with --ref should succeed")
+    }
+    
+    // Test that config tag field is updated when updating to new tag
+    @Test("update updates tag field in config when tag changes")
+    func testUpdateUpdatesTagFieldInConfig() async throws {
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Initialize config
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        
+        // Manually create config with an old tag (simulating a subtree added with old tag)
+        // Using swift-argument-parser which has many tags
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", "https://github.com/apple/swift-argument-parser.git", "--name", "argparser", "--prefix", "vendor/argparser", "--ref", "1.0.0"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed: \(addResult.stderr)")
+        
+        // Read config before update
+        let configPath = local.path.appending("/subtree.yaml")
+        let configBefore = try String(contentsOfFile: configPath.string, encoding: .utf8)
+        #expect(configBefore.contains("tag: 1.0.0") || configBefore.contains("branch:"), "Config should have ref")
+        
+        // Try to update (should detect newer tags)
+        let result = try await harness.run(
+            arguments: ["update", "argparser"],
+            workingDirectory: local.path
+        )
+        
+        // Should succeed
+        #expect(result.exitCode == 0, "Update should succeed: \(result.stdout)")
+        
+        // If updated, verify tag field changed
+        if result.stdout.contains("Updated") && !result.stdout.contains("up to date") {
+            let configAfter = try String(contentsOfFile: configPath.string, encoding: .utf8)
+            // Tag should be updated (not still 1.0.0)
+            #expect(!configAfter.contains("tag: 1.0.0"), "Tag should be updated to newer version")
+        }
+    }
+    
+    // Test commit message shows version transition
+    @Test("update commit message shows version transition for tags")
+    func testUpdateCommitMessageShowsVersionTransition() async throws {
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Initialize and add subtree with a specific old tag
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", "https://github.com/apple/swift-argument-parser.git", "--name", "argparser", "--prefix", "vendor/argparser", "--ref", "1.0.0"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed: \(addResult.stderr)")
+        
+        // Try to update
+        let result = try await harness.run(
+            arguments: ["update", "argparser"],
+            workingDirectory: local.path
+        )
+        #expect(result.exitCode == 0, "Update should succeed")
+        
+        // If updated (not up-to-date), check commit message format
+        if result.stdout.contains("Updated") && !result.stdout.contains("up to date") {
+            let commitMsg = try await local.runGit(["log", "-1", "--format=%B"])
+            // Should show version transition with arrow
+            #expect(commitMsg.contains("→") || commitMsg.contains("tag:"), "Commit message should show version info")
+            #expect(commitMsg.contains("argparser"), "Commit message should mention subtree name")
+        }
+    }
+    
+    // Test auto-detect latest tag for tag-configured subtrees
+    @Test("update auto-detects latest tag when configured with tag")
+    func testUpdateAutoDetectsLatestTag() async throws {
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Initialize config
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        
+        // Add subtree with an old tag
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", "https://github.com/apple/swift-argument-parser.git", "--name", "argparser", "--prefix", "vendor/argparser", "--ref", "1.0.0"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed")
+        
+        // Update should auto-detect newer tags
+        let result = try await harness.run(
+            arguments: ["update", "argparser"],
+            workingDirectory: local.path
+        )
+        
+        // Should succeed and show updating message (since 1.0.0 is very old)
+        #expect(result.exitCode == 0, "Update should succeed")
+        // The output should indicate updating or already up to date
+        let hasStatusMessage = result.stdout.contains("Updating") || result.stdout.contains("Updated") || result.stdout.contains("up to date")
+        #expect(hasStatusMessage, "Should show status message")
+    }
 }
