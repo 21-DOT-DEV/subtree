@@ -23,7 +23,7 @@ public enum GlobMatcherError: Error, Equatable {
 public struct GlobMatcher {
     private let pattern: String
     private let components: [PatternComponent]
-    
+
     /// Initialize a glob matcher with a pattern
     ///
     /// - Parameter pattern: Glob pattern to match against
@@ -32,11 +32,11 @@ public struct GlobMatcher {
         guard !pattern.isEmpty else {
             throw GlobMatcherError.emptyPattern
         }
-        
+
         self.pattern = pattern
         self.components = try Self.parse(pattern: pattern)
     }
-    
+
     /// Check if a path matches the glob pattern
     ///
     /// - Parameter path: File path to test (relative path)
@@ -45,11 +45,11 @@ public struct GlobMatcher {
         // Normalize trailing slash in both pattern and path (but preserve leading ones)
         let normalizedPath = path.hasSuffix("/") ? String(path.dropLast()) : path
         let normalizedPattern = pattern.hasSuffix("/") ? String(pattern.dropLast()) : pattern
-        
+
         // Split into segments, preserving empty segments from leading slashes
         var pathSegments = normalizedPath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         var patternSegments = normalizedPattern.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        
+
         // Remove trailing empty segments (from normalized trailing slashes)
         while pathSegments.last?.isEmpty == true {
             pathSegments.removeLast()
@@ -57,12 +57,12 @@ public struct GlobMatcher {
         while patternSegments.last?.isEmpty == true {
             patternSegments.removeLast()
         }
-        
+
         return matchSegments(patternSegments, against: pathSegments)
     }
-    
+
     // MARK: - Private Implementation
-    
+
     private enum PatternComponent {
         case literal(String)
         case wildcard
@@ -71,23 +71,23 @@ public struct GlobMatcher {
         case characterClass(Set<Character>)
         case braceExpansion([String])
     }
-    
+
     /// Parse glob pattern into components
     private static func parse(pattern: String) throws -> [PatternComponent] {
         var components: [PatternComponent] = []
         var currentLiteral = ""
         var i = pattern.startIndex
-        
+
         func addLiteral() {
             if !currentLiteral.isEmpty {
                 components.append(.literal(currentLiteral))
                 currentLiteral = ""
             }
         }
-        
+
         while i < pattern.endIndex {
             let char = pattern[i]
-            
+
             switch char {
             case "*":
                 // Check for globstar (**)
@@ -101,11 +101,11 @@ public struct GlobMatcher {
                     addLiteral()
                     components.append(.wildcard)
                 }
-                
+
             case "?":
                 addLiteral()
                 components.append(.singleChar)
-                
+
             case "[":
                 addLiteral()
                 let (charClass, endIndex) = try parseCharacterClass(pattern, startingAt: i)
@@ -113,7 +113,7 @@ public struct GlobMatcher {
                 i = endIndex
                 i = pattern.index(after: i)
                 continue
-                
+
             case "{":
                 addLiteral()
                 let (alternatives, endIndex) = try parseBraceExpansion(pattern, startingAt: i)
@@ -121,32 +121,32 @@ public struct GlobMatcher {
                 i = endIndex
                 i = pattern.index(after: i)
                 continue
-                
+
             default:
                 currentLiteral.append(char)
             }
-            
+
             i = pattern.index(after: i)
         }
-        
+
         addLiteral()
         return components
     }
-    
+
     /// Parse character class [abc] or [a-z]
     private static func parseCharacterClass(_ pattern: String, startingAt start: String.Index) throws -> (Set<Character>, String.Index) {
         var chars = Set<Character>()
         var i = pattern.index(after: start) // Skip '['
         var foundClosing = false
-        
+
         while i < pattern.endIndex {
             let char = pattern[i]
-            
+
             if char == "]" {
                 foundClosing = true
                 break
             }
-            
+
             // Check for range (a-z)
             let nextIndex = pattern.index(after: i)
             if nextIndex < pattern.endIndex && pattern[nextIndex] == "-" {
@@ -172,32 +172,32 @@ public struct GlobMatcher {
                     }
                 }
             }
-            
+
             chars.insert(char)
             i = pattern.index(after: i)
         }
-        
+
         guard foundClosing else {
             throw GlobMatcherError.unclosedBracket(String(pattern[start...]))
         }
-        
+
         guard !chars.isEmpty else {
             throw GlobMatcherError.emptyCharacterClass(String(pattern[start...i]))
         }
-        
+
         return (chars, i)
     }
-    
+
     /// Parse brace expansion {a,b,c}
     private static func parseBraceExpansion(_ pattern: String, startingAt start: String.Index) throws -> ([String], String.Index) {
         var alternatives: [String] = []
         var current = ""
         var i = pattern.index(after: start) // Skip '{'
         var foundClosing = false
-        
+
         while i < pattern.endIndex {
             let char = pattern[i]
-            
+
             if char == "}" {
                 alternatives.append(current)
                 foundClosing = true
@@ -208,35 +208,35 @@ public struct GlobMatcher {
             } else {
                 current.append(char)
             }
-            
+
             i = pattern.index(after: i)
         }
-        
+
         guard foundClosing else {
             throw GlobMatcherError.unclosedBrace(String(pattern[start...]))
         }
-        
+
         return (alternatives, i)
     }
-    
+
     /// Match pattern segments against path segments
     private func matchSegments(_ patternSegments: [String], against pathSegments: [String]) -> Bool {
         return matchSegmentsRecursive(patternSegments, 0, pathSegments, 0)
     }
-    
+
     private func matchSegmentsRecursive(_ patternSegments: [String], _ patternIndex: Int, _ pathSegments: [String], _ pathIndex: Int) -> Bool {
         // Both exhausted - success
         if patternIndex >= patternSegments.count && pathIndex >= pathSegments.count {
             return true
         }
-        
+
         // Pattern exhausted but path remains - failure
         if patternIndex >= patternSegments.count {
             return false
         }
-        
+
         let patternSegment = patternSegments[patternIndex]
-        
+
         // Check for globstar (**)
         if patternSegment == "**" {
             // Try matching zero or more path segments
@@ -252,21 +252,21 @@ public struct GlobMatcher {
             }
             return false
         }
-        
+
         // For other patterns, we need a path segment to match
         guard pathIndex < pathSegments.count else {
             return false
         }
-        
+
         let pathSegment = pathSegments[pathIndex]
-        
+
         if matchSingleSegment(pattern: patternSegment, against: pathSegment) {
             return matchSegmentsRecursive(patternSegments, patternIndex + 1, pathSegments, pathIndex + 1)
         } else {
             return false
         }
     }
-    
+
     /// Match a single pattern segment against a path segment
     private func matchSingleSegment(pattern: String, against pathSegment: String) -> Bool {
         // Try to parse the pattern segment for special characters
@@ -278,23 +278,23 @@ public struct GlobMatcher {
             return pattern == pathSegment
         }
     }
-    
+
     /// Match parsed components against a single string (not a path)
     private func matchComponentsAgainstString(_ components: [PatternComponent], against str: String) -> Bool {
         return matchComponentsStringRecursive(components, 0, str, str.startIndex)
     }
-    
+
     private func matchComponentsStringRecursive(_ components: [PatternComponent], _ compIndex: Int, _ str: String, _ strIndex: String.Index) -> Bool {
         // Both exhausted - success
         if compIndex >= components.count && strIndex >= str.endIndex {
             return true
         }
-        
+
         // Components exhausted but string remains - failure
         if compIndex >= components.count {
             return false
         }
-        
+
         // String exhausted but components remain
         if strIndex >= str.endIndex {
             // Only wildcards can match empty
@@ -304,9 +304,9 @@ public struct GlobMatcher {
             }
             return false
         }
-        
+
         let component = components[compIndex]
-        
+
         switch component {
         case .literal(let lit):
             let endIndex = str.index(strIndex, offsetBy: lit.count, limitedBy: str.endIndex) ?? str.endIndex
@@ -315,7 +315,7 @@ public struct GlobMatcher {
                 return matchComponentsStringRecursive(components, compIndex + 1, str, endIndex)
             }
             return false
-            
+
         case .wildcard:
             // Wildcard: try matching 0 or more characters
             // Try from longest to shortest for greedy matching
@@ -326,15 +326,15 @@ public struct GlobMatcher {
                 }
             }
             return false
-            
+
         case .globstar:
             // Globstar shouldn't appear in a single segment pattern
             return false
-            
+
         case .singleChar:
             let nextIndex = str.index(after: strIndex)
             return matchComponentsStringRecursive(components, compIndex + 1, str, nextIndex)
-            
+
         case .characterClass(let chars):
             let char = str[strIndex]
             if chars.contains(char) {
@@ -342,11 +342,23 @@ public struct GlobMatcher {
                 return matchComponentsStringRecursive(components, compIndex + 1, str, nextIndex)
             }
             return false
-            
+
         case .braceExpansion(let alternatives):
-            // For brace expansion, the entire remaining string should match one alternative
-            let remaining = String(str[strIndex...])
-            return alternatives.contains(remaining)
+            // Try each alternative as a prefix, then continue matching remaining components
+            for alternative in alternatives {
+                // Check if the string starts with this alternative
+                let altEndIndex = str.index(strIndex, offsetBy: alternative.count, limitedBy: str.endIndex)
+                if let endIdx = altEndIndex {
+                    let substring = String(str[strIndex..<endIdx])
+                    if substring == alternative {
+                        // Alternative matched, continue with remaining components
+                        if matchComponentsStringRecursive(components, compIndex + 1, str, endIdx) {
+                            return true
+                        }
+                    }
+                }
+            }
+            return false
         }
     }
 }
