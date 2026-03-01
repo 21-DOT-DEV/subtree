@@ -125,8 +125,107 @@ public enum GitOperations {
         return (stdout, stderr, exitCode)
     }
     
+    /// Information about a subtree's split tracking state
+    public struct SubtreeSplitInfo: Sendable {
+        /// The split hash recorded for this prefix
+        public let splitHash: String
+        /// Whether the commit containing this trailer also has trailers for other prefixes
+        public let isMultiTrailer: Bool
+        /// The commit hash where the trailer was found
+        public let commitHash: String
+    }
+    
+    /// Find the most recent subtree split info for a given prefix
+    ///
+    /// Scans git log for commits containing `git-subtree-dir: <prefix>` and extracts
+    /// the corresponding `git-subtree-split` hash. Also detects if the commit has
+    /// trailers for multiple different prefixes (multi-trailer merge commits).
+    ///
+    /// - Parameter prefix: The subtree prefix directory (e.g., "Vendor/secp256k1")
+    /// - Returns: Split info if found, nil if no subtree tracking exists for this prefix
+    /// - Throws: GitError if git commands fail
+    public static func findSubtreeSplitInfo(prefix: String) async throws -> SubtreeSplitInfo? {
+        // Find the most recent commit with a git-subtree-dir trailer matching this prefix
+        let logResult = try await run(arguments: [
+            "log", "--all", "--grep=^git-subtree-dir: \(prefix)$",
+            "--format=%H%n%B", "-1"
+        ])
+        
+        guard logResult.exitCode == 0, !logResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        
+        let output = logResult.stdout
+        let lines = output.components(separatedBy: "\n")
+        guard let commitHash = lines.first, !commitHash.isEmpty else {
+            return nil
+        }
+        
+        // Parse all git-subtree-dir and git-subtree-split pairs from the commit message
+        var dirSplitPairs: [(dir: String, split: String)] = []
+        var currentDir: String?
+        
+        for line in lines.dropFirst() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("git-subtree-dir: ") {
+                currentDir = String(trimmed.dropFirst("git-subtree-dir: ".count))
+            } else if trimmed.hasPrefix("git-subtree-split: "), let dir = currentDir {
+                let split = String(trimmed.dropFirst("git-subtree-split: ".count))
+                dirSplitPairs.append((dir: dir, split: split))
+                currentDir = nil
+            }
+        }
+        
+        // Find the split hash for our target prefix
+        guard let matchingPair = dirSplitPairs.first(where: { $0.dir == prefix }) else {
+            return nil
+        }
+        
+        // Count unique prefixes to detect multi-trailer commits
+        let uniquePrefixes = Set(dirSplitPairs.map { $0.dir })
+        
+        return SubtreeSplitInfo(
+            splitHash: matchingPair.split,
+            isMultiTrailer: uniquePrefixes.count > 1,
+            commitHash: commitHash
+        )
+    }
+    
+    /// Create a resync commit to fix multi-trailer split tracking
+    ///
+    /// When a merge commit contains `git-subtree-dir`/`git-subtree-split` trailers for
+    /// multiple different prefixes, `git subtree pull` can pick the wrong split hash.
+    /// This creates an empty commit with a single correct trailer so `git subtree`
+    /// finds it first (newest) and uses the right split hash.
+    ///
+    /// - Parameters:
+    ///   - prefix: The subtree prefix directory
+    ///   - splitHash: The correct split hash for this prefix
+    /// - Throws: GitError if the commit fails
+    public static func createResyncCommit(prefix: String, splitHash: String) async throws {
+        let shortHash = String(splitHash.prefix(8))
+        let message = """
+        Squashed '\(prefix)/' content from commit \(shortHash)
+        
+        git-subtree-dir: \(prefix)
+        git-subtree-split: \(splitHash)
+        """
+        
+        let result = try await run(arguments: [
+            "commit", "--allow-empty", "-m", message
+        ])
+        guard result.exitCode == 0 else {
+            throw GitError.commandFailed("Failed to create resync commit: \(result.stderr)")
+        }
+    }
+    
     // T006: Git subtree pull wrapper for update operations
     /// Execute git subtree pull to update a subtree
+    ///
+    /// Before pulling, checks for multi-trailer merge commits that can confuse
+    /// `git subtree`'s split hash detection. If found, creates a resync commit
+    /// with the correct single-prefix trailer to fix the issue transparently.
+    ///
     /// - Parameters:
     ///   - prefix: Local directory path for the subtree
     ///   - remote: Git remote URL
@@ -135,6 +234,13 @@ public enum GitOperations {
     /// - Returns: Commit hash of the pulled changes
     /// - Throws: GitError if operation fails
     public static func subtreePull(prefix: String, remote: String, ref: String, squash: Bool) async throws -> String {
+        // Pre-flight: detect and fix multi-trailer split tracking
+        if squash, let splitInfo = try? await findSubtreeSplitInfo(prefix: prefix) {
+            if splitInfo.isMultiTrailer {
+                try await createResyncCommit(prefix: prefix, splitHash: splitInfo.splitHash)
+            }
+        }
+        
         var args = ["subtree", "pull", "--prefix=\(prefix)"]
         if squash {
             args.append("--squash")
