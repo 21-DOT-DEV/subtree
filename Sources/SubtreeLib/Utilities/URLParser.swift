@@ -50,6 +50,59 @@ public enum URLParser {
         
         return name
     }
+    
+    /// Construct a GitHub compare URL from a remote URL and two refs.
+    ///
+    /// Supports both HTTPS and SSH (`git@`) GitHub URLs. Non-GitHub URLs return `nil`.
+    ///
+    /// - Parameters:
+    ///   - remote: Git remote URL (e.g., "https://github.com/bitcoin-core/secp256k1" or "git@github.com:user/repo.git")
+    ///   - oldRef: Old tag, branch, or commit
+    ///   - newRef: New tag, branch, or commit
+    /// - Returns: Compare URL string, or `nil` if remote is not a GitHub URL
+    public static func compareURL(remote: String, oldRef: String, newRef: String) -> String? {
+        var processedURL = remote
+        
+        // Handle git@ format: git@github.com:user/repo.git → github.com/user/repo.git
+        if processedURL.hasPrefix("git@") {
+            if let colonRange = processedURL.range(of: ":") {
+                processedURL.replaceSubrange(colonRange, with: "/")
+            }
+        }
+        
+        // Remove scheme prefixes
+        let schemes = ["https://", "http://", "git@"]
+        for scheme in schemes {
+            if processedURL.hasPrefix(scheme) {
+                processedURL = String(processedURL.dropFirst(scheme.count))
+            }
+        }
+        
+        // Check that the host is github.com
+        guard processedURL.hasPrefix("github.com/") else {
+            return nil
+        }
+        
+        // Extract the path after github.com/
+        let path = String(processedURL.dropFirst("github.com/".count))
+        
+        // Remove .git suffix if present
+        var cleanPath = path
+        if cleanPath.hasSuffix(".git") {
+            cleanPath = String(cleanPath.dropLast(4))
+        }
+        
+        // Remove trailing slash if present
+        if cleanPath.hasSuffix("/") {
+            cleanPath = String(cleanPath.dropLast())
+        }
+        
+        guard !cleanPath.isEmpty else {
+            return nil
+        }
+        
+        return "https://github.com/\(cleanPath)/compare/\(oldRef)...\(newRef)"
+    }
 }
 
 public enum URLParseError: Error {

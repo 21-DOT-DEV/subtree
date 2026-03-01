@@ -18,12 +18,56 @@ public struct ReportEntry: Codable, Sendable {
     public let branch: String?
     public let remote: String
     public let error: String?
+    public let latestCommit: String?
+    public let compareURL: String?
+    public let branchName: String?
+    public let extractions: [String]?
+    public let prTitle: String?
+    public let prBody: String?
 
     private enum CodingKeys: String, CodingKey {
-        case name, status, remote, branch, error
+        case name, status, remote, branch, error, extractions
         case currentTag = "current_tag"
         case latestTag = "latest_tag"
         case currentCommit = "current_commit"
+        case latestCommit = "latest_commit"
+        case compareURL = "compare_url"
+        case branchName = "branch_name"
+        case prTitle = "pr_title"
+        case prBody = "pr_body"
+    }
+
+    /// Initialize with all fields (used for "behind" entries with enriched data)
+    public init(
+        name: String,
+        status: ReportStatus,
+        currentTag: String?,
+        latestTag: String?,
+        currentCommit: String?,
+        branch: String?,
+        remote: String,
+        error: String?,
+        latestCommit: String? = nil,
+        compareURL: String? = nil,
+        branchName: String? = nil,
+        extractions: [String]? = nil,
+        prTitle: String? = nil,
+        prBody: String? = nil
+    ) {
+        self.name = name
+        self.status = status
+        self.currentTag = currentTag
+        self.latestTag = latestTag
+        self.currentCommit = currentCommit
+        self.branch = branch
+        self.remote = remote
+        self.error = error
+        self.latestCommit = latestCommit
+        self.compareURL = compareURL
+        self.branchName = branchName
+        self.extractions = extractions
+        self.prTitle = prTitle
+        self.prBody = prBody
     }
 }
 
@@ -544,6 +588,20 @@ public struct UpdateCommand: AsyncParsableCommand {
                     
                     if entry.tag != latestTag.tag {
                         hasUpdates = true
+                        let shortLatestCommit = CommitMessageFormatter.shortHash(from: latestTag.commit)
+                        let compareURL = URLParser.compareURL(
+                            remote: entry.remote,
+                            oldRef: entry.tag!,
+                            newRef: latestTag.tag
+                        )
+                        let extractionDescriptions = formatExtractions(entry.extractions)
+                        let prBody = formatPRBody(
+                            name: entry.name,
+                            oldVersion: entry.tag!,
+                            newVersion: latestTag.tag,
+                            compareURL: compareURL,
+                            extractionDescriptions: extractionDescriptions
+                        )
                         let reportEntry = ReportEntry(
                             name: entry.name,
                             status: .behind,
@@ -552,7 +610,13 @@ public struct UpdateCommand: AsyncParsableCommand {
                             currentCommit: nil,
                             branch: nil,
                             remote: entry.remote,
-                            error: nil
+                            error: nil,
+                            latestCommit: shortLatestCommit,
+                            compareURL: compareURL,
+                            branchName: "subtree/\(entry.name)-\(latestTag.tag)",
+                            extractions: extractionDescriptions,
+                            prTitle: "chore(deps): update subtree \(entry.name) to \(latestTag.tag)",
+                            prBody: prBody
                         )
                         reportEntries.append(reportEntry)
                         if !asJSON {
@@ -583,6 +647,19 @@ public struct UpdateCommand: AsyncParsableCommand {
                         hasUpdates = true
                         let shortCurrent = CommitMessageFormatter.shortHash(from: entry.commit)
                         let shortNew = CommitMessageFormatter.shortHash(from: remoteCommit)
+                        let compareURL = URLParser.compareURL(
+                            remote: entry.remote,
+                            oldRef: entry.commit,
+                            newRef: remoteCommit
+                        )
+                        let extractionDescriptions = formatExtractions(entry.extractions)
+                        let prBody = formatPRBody(
+                            name: entry.name,
+                            oldVersion: shortCurrent,
+                            newVersion: shortNew,
+                            compareURL: compareURL,
+                            extractionDescriptions: extractionDescriptions
+                        )
                         let reportEntry = ReportEntry(
                             name: entry.name,
                             status: .behind,
@@ -591,7 +668,13 @@ public struct UpdateCommand: AsyncParsableCommand {
                             currentCommit: shortCurrent,
                             branch: branchRef,
                             remote: entry.remote,
-                            error: nil
+                            error: nil,
+                            latestCommit: shortNew,
+                            compareURL: compareURL,
+                            branchName: "subtree/\(entry.name)-\(shortNew)",
+                            extractions: extractionDescriptions,
+                            prTitle: "chore(deps): update subtree \(entry.name) to \(shortNew)",
+                            prBody: prBody
                         )
                         reportEntries.append(reportEntry)
                         if !asJSON {
@@ -697,5 +780,79 @@ public struct UpdateCommand: AsyncParsableCommand {
             - Mode: \(squashMode)
             """
         }
+    }
+    
+    /// Format extraction mappings as human-readable strings for report output.
+    ///
+    /// Each `ExtractionMapping` is formatted as:
+    /// `<from_patterns> → <to_destinations> (excluding <exclude_patterns>)`
+    ///
+    /// - Parameter extractions: The extraction mappings to format, or `nil`
+    /// - Returns: Array of formatted strings, or `nil` if input is `nil` or empty
+    private func formatExtractions(_ extractions: [ExtractionMapping]?) -> [String]? {
+        guard let extractions, !extractions.isEmpty else {
+            return nil
+        }
+        
+        return extractions.map { mapping in
+            let from = mapping.from.joined(separator: ", ")
+            let to = mapping.to.joined(separator: ", ")
+            var result = "\(from) → \(to)"
+            
+            if let exclude = mapping.exclude, !exclude.isEmpty {
+                let excludeStr = exclude.joined(separator: ", ")
+                result += " (excluding \(excludeStr))"
+            }
+            
+            return result
+        }
+    }
+    
+    /// Format a PR body for a subtree update.
+    ///
+    /// - Parameters:
+    ///   - name: Subtree name
+    ///   - oldVersion: Old version string (tag or short commit hash)
+    ///   - newVersion: New version string (tag or short commit hash)
+    ///   - compareURL: GitHub compare URL, or `nil` for non-GitHub remotes
+    ///   - extractionDescriptions: Formatted extraction strings, or `nil`
+    /// - Returns: Complete PR body markdown
+    private func formatPRBody(
+        name: String,
+        oldVersion: String,
+        newVersion: String,
+        compareURL: String?,
+        extractionDescriptions: [String]?
+    ) -> String {
+        let compareLine: String
+        if let compareURL {
+            compareLine = "- **Compare**: [\(oldVersion)...\(newVersion)](\(compareURL))"
+        } else {
+            compareLine = "- **Compare**: \(oldVersion)...\(newVersion)"
+        }
+        
+        let extractionsSection: String
+        if let descriptions = extractionDescriptions, !descriptions.isEmpty {
+            let bullets = descriptions.map { "- `\($0)`" }.joined(separator: "\n")
+            extractionsSection = bullets
+        } else {
+            extractionsSection = "None configured"
+        }
+        
+        return """
+        ## Update subtree `\(name)` (\(oldVersion) → \(newVersion))
+        
+        ### Changes
+        - **Previous**: \(oldVersion)
+        - **Updated**: \(newVersion)
+        \(compareLine)
+        
+        ### Extractions Applied
+        \(extractionsSection)
+        
+        ---
+        > 🤖 This PR was automatically created by the subtree update workflow.
+        > Review the changes and merge when ready.
+        """
     }
 }
