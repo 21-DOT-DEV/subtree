@@ -54,6 +54,72 @@ struct URLParserTests {
         #expect(name == "myrepo")
     }
     
+    // MARK: - compareURL Tests
+    
+    @Test("compareURL with GitHub HTTPS URL")
+    func testCompareURLGitHubHTTPS() {
+        let url = URLParser.compareURL(
+            remote: "https://github.com/bitcoin-core/secp256k1",
+            oldRef: "v0.3.1",
+            newRef: "v0.4.0"
+        )
+        #expect(url == "https://github.com/bitcoin-core/secp256k1/compare/v0.3.1...v0.4.0")
+    }
+    
+    @Test("compareURL with GitHub HTTPS URL with .git suffix")
+    func testCompareURLGitHubHTTPSWithGitSuffix() {
+        let url = URLParser.compareURL(
+            remote: "https://github.com/apple/swift-crypto.git",
+            oldRef: "3.10.0",
+            newRef: "4.0.0"
+        )
+        #expect(url == "https://github.com/apple/swift-crypto/compare/3.10.0...4.0.0")
+    }
+    
+    @Test("compareURL with GitHub SSH URL")
+    func testCompareURLGitHubSSH() {
+        let url = URLParser.compareURL(
+            remote: "git@github.com:user/repo.git",
+            oldRef: "v1.0.0",
+            newRef: "v2.0.0"
+        )
+        #expect(url == "https://github.com/user/repo/compare/v1.0.0...v2.0.0")
+    }
+    
+    @Test("compareURL returns nil for non-GitHub URLs")
+    func testCompareURLNonGitHub() {
+        // GitLab
+        #expect(URLParser.compareURL(
+            remote: "https://gitlab.com/user/repo.git",
+            oldRef: "v1.0.0",
+            newRef: "v2.0.0"
+        ) == nil)
+        
+        // Bitbucket
+        #expect(URLParser.compareURL(
+            remote: "https://bitbucket.org/user/repo.git",
+            oldRef: "v1.0.0",
+            newRef: "v2.0.0"
+        ) == nil)
+        
+        // file://
+        #expect(URLParser.compareURL(
+            remote: "file:///local/path/repo.git",
+            oldRef: "v1.0.0",
+            newRef: "v2.0.0"
+        ) == nil)
+    }
+    
+    @Test("compareURL with full commit hashes for branch-based entries")
+    func testCompareURLWithCommitHashes() {
+        let url = URLParser.compareURL(
+            remote: "https://github.com/user/repo",
+            oldRef: "abc123def456abc123def456abc123def456abc1",
+            newRef: "def456abc123def456abc123def456abc123def4"
+        )
+        #expect(url == "https://github.com/user/repo/compare/abc123def456abc123def456abc123def456abc1...def456abc123def456abc123def456abc123def4")
+    }
+    
     // T014 - Verify parsing works for standard formats
     @Test("Parse standard formats (GitHub, GitLab, Bitbucket)")
     func testStandardFormats() throws {
