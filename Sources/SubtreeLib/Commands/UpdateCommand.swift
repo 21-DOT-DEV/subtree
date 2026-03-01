@@ -1,26 +1,30 @@
 import ArgumentParser
 import Foundation
 
-// T009: UpdateStatus enum for tracking update operation state
-/// Status of a subtree update check
-public enum UpdateStatus {
-    case upToDate      // Local commit matches remote
-    case behind        // Remote has new commits
-    case ahead         // Local has commits not on remote
-    case diverged      // Both have unique commits
-    case error         // Failed to determine status
+/// Minimal status for report mode output
+public enum ReportStatus: String, Codable, Sendable {
+    case behind = "behind"
+    case upToDate = "up_to_date"
+    case error = "error"
 }
 
-// T010: UpdateReport struct for report mode output
-/// Report of update status for a single subtree
-public struct UpdateReport {
-    let name: String
-    let currentCommit: String?
-    let availableCommit: String?
-    let status: UpdateStatus
-    let commitsBehind: Int?
-    let daysBehind: Int?
-    let error: String?
+/// A single entry in the update report, suitable for JSON serialization
+public struct ReportEntry: Codable, Sendable {
+    public let name: String
+    public let status: ReportStatus
+    public let currentTag: String?
+    public let latestTag: String?
+    public let currentCommit: String?
+    public let branch: String?
+    public let remote: String
+    public let error: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case name, status, remote, branch, error
+        case currentTag = "current_tag"
+        case latestTag = "latest_tag"
+        case currentCommit = "current_commit"
+    }
 }
 
 // T037: BatchUpdateResult for tracking bulk update results
@@ -58,6 +62,9 @@ public struct UpdateCommand: AsyncParsableCommand {
     // T048: Add --report flag
     @Flag(name: .long, help: "Check for updates without modifying repository (exit 5 if updates available)")
     var report: Bool = false
+    
+    @Flag(name: .long, help: "Output report as JSON array to stdout (implies --report)")
+    var json: Bool = false
     
     @Option(name: .long, help: "Specific ref (tag, branch, or commit) to update to")
     var ref: String?
@@ -120,8 +127,8 @@ public struct UpdateCommand: AsyncParsableCommand {
         }
         
         // T049-T055: Report mode vs update mode
-        if report {
-            try await runReportMode(config: config, all: all, name: name)
+        if report || json {
+            try await runReportMode(config: config, all: all, name: name, asJSON: json)
         } else if all {
             try await runBatchUpdate(config: config, configPath: configPath)
         } else if let singleName = name {
@@ -487,8 +494,8 @@ public struct UpdateCommand: AsyncParsableCommand {
         return true
     }
     
-    // T049-T055: Report mode implementation
-    private func runReportMode(config: SubtreeConfiguration, all: Bool, name: String?) async throws {
+    // T049-T055: Report mode implementation (fixed tag detection + JSON support)
+    private func runReportMode(config: SubtreeConfiguration, all: Bool, name: String?, asJSON: Bool) async throws {
         var hasUpdates = false
         let entriesToCheck: [SubtreeEntry]
         
@@ -510,21 +517,129 @@ public struct UpdateCommand: AsyncParsableCommand {
             entriesToCheck = []
         }
         
+        var reportEntries: [ReportEntry] = []
+        
         for entry in entriesToCheck {
             do {
-                let ref = entry.tag ?? entry.branch ?? "main"
-                let remoteCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: ref)
-                
-                if entry.commit != remoteCommit {
-                    hasUpdates = true
-                    let shortOld = CommitMessageFormatter.shortHash(from: entry.commit)
-                    let shortNew = CommitMessageFormatter.shortHash(from: remoteCommit)
-                    print("📦 \(entry.name): \(shortOld) → \(shortNew)")
+                if entry.tag != nil {
+                    // TAG-BASED: Use lsRemoteTags to find latest tag
+                    let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
+                    guard let latestTag = remoteTags.first else {
+                        let reportEntry = ReportEntry(
+                            name: entry.name,
+                            status: .error,
+                            currentTag: entry.tag,
+                            latestTag: nil,
+                            currentCommit: nil,
+                            branch: nil,
+                            remote: entry.remote,
+                            error: "No tags found on remote"
+                        )
+                        reportEntries.append(reportEntry)
+                        if !asJSON {
+                            print("⚠️  \(entry.name): no tags found on remote")
+                        }
+                        continue
+                    }
+                    
+                    if entry.tag != latestTag.tag {
+                        hasUpdates = true
+                        let reportEntry = ReportEntry(
+                            name: entry.name,
+                            status: .behind,
+                            currentTag: entry.tag,
+                            latestTag: latestTag.tag,
+                            currentCommit: nil,
+                            branch: nil,
+                            remote: entry.remote,
+                            error: nil
+                        )
+                        reportEntries.append(reportEntry)
+                        if !asJSON {
+                            print("📦 \(entry.name): \(entry.tag!) → \(latestTag.tag)")
+                        }
+                    } else {
+                        let reportEntry = ReportEntry(
+                            name: entry.name,
+                            status: .upToDate,
+                            currentTag: entry.tag,
+                            latestTag: latestTag.tag,
+                            currentCommit: nil,
+                            branch: nil,
+                            remote: entry.remote,
+                            error: nil
+                        )
+                        reportEntries.append(reportEntry)
+                        if !asJSON {
+                            print("✅ \(entry.name): up to date (\(entry.tag!))")
+                        }
+                    }
                 } else {
-                    print("✅ \(entry.name): up to date")
+                    // BRANCH-BASED: Use lsRemote to get latest commit on branch
+                    let branchRef = entry.branch ?? "main"
+                    let remoteCommit = try await GitOperations.lsRemote(remote: entry.remote, ref: branchRef)
+                    
+                    if entry.commit != remoteCommit {
+                        hasUpdates = true
+                        let shortCurrent = CommitMessageFormatter.shortHash(from: entry.commit)
+                        let shortNew = CommitMessageFormatter.shortHash(from: remoteCommit)
+                        let reportEntry = ReportEntry(
+                            name: entry.name,
+                            status: .behind,
+                            currentTag: nil,
+                            latestTag: nil,
+                            currentCommit: shortCurrent,
+                            branch: branchRef,
+                            remote: entry.remote,
+                            error: nil
+                        )
+                        reportEntries.append(reportEntry)
+                        if !asJSON {
+                            print("📦 \(entry.name): \(shortCurrent) → \(shortNew)")
+                        }
+                    } else {
+                        let shortCurrent = CommitMessageFormatter.shortHash(from: entry.commit)
+                        let reportEntry = ReportEntry(
+                            name: entry.name,
+                            status: .upToDate,
+                            currentTag: nil,
+                            latestTag: nil,
+                            currentCommit: shortCurrent,
+                            branch: branchRef,
+                            remote: entry.remote,
+                            error: nil
+                        )
+                        reportEntries.append(reportEntry)
+                        if !asJSON {
+                            print("✅ \(entry.name): up to date")
+                        }
+                    }
                 }
             } catch {
-                print("⚠️  \(entry.name): failed to check (\(error.localizedDescription))")
+                let reportEntry = ReportEntry(
+                    name: entry.name,
+                    status: .error,
+                    currentTag: entry.tag,
+                    latestTag: nil,
+                    currentCommit: entry.tag == nil ? CommitMessageFormatter.shortHash(from: entry.commit) : nil,
+                    branch: entry.branch,
+                    remote: entry.remote,
+                    error: error.localizedDescription
+                )
+                reportEntries.append(reportEntry)
+                if !asJSON {
+                    print("⚠️  \(entry.name): failed to check (\(error.localizedDescription))")
+                }
+            }
+        }
+        
+        // JSON output path
+        if asJSON {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let jsonData = try encoder.encode(reportEntries)
+            if let jsonString = String(data: jsonData, encoding: .utf8) {
+                print(jsonString)
             }
         }
         
