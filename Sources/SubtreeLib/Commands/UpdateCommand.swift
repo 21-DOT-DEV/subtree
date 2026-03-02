@@ -310,7 +310,8 @@ public struct UpdateCommand: AsyncParsableCommand {
                     tag: newTag,
                     branch: newBranch,
                     squash: subtree.squash,
-                    extracts: subtree.extracts
+                    extracts: subtree.extracts,
+                    extractions: subtree.extractions
                 )
             }
             return subtree
@@ -494,7 +495,8 @@ public struct UpdateCommand: AsyncParsableCommand {
                     tag: newTag,
                     branch: newBranch,
                     squash: subtree.squash,
-                    extracts: subtree.extracts
+                    extracts: subtree.extracts,
+                    extractions: subtree.extractions
                 )
             }
             return subtree
