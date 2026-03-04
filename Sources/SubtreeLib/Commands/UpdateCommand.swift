@@ -287,7 +287,8 @@ public struct UpdateCommand: AsyncParsableCommand {
                 prefix: entry.prefix,
                 remote: entry.remote,
                 ref: targetRef,
-                squash: useSquash
+                squash: useSquash,
+                expectedCommit: currentCommit
             )
         } catch {
             print("❌ Failed to update subtree: \(error)")
@@ -476,7 +477,8 @@ public struct UpdateCommand: AsyncParsableCommand {
             prefix: entry.prefix,
             remote: entry.remote,
             ref: targetRef,
-            squash: useSquash
+            squash: useSquash,
+            expectedCommit: currentCommit
         )
         
         // Check if subtree pull created a new commit
