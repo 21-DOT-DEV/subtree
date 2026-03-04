@@ -232,4 +232,65 @@ final class StaleTrailerResyncTests {
         #expect(newCommitCount == 1,
                 "Normal update should create exactly 1 first-parent commit (no resync), got \(newCommitCount)")
     }
+    
+    @Test("update detects stale trailer even when correct trailer exists on another branch")
+    func testStaleTrailerNotMaskedByOtherBranch() async throws {
+        // This reproduces the exact CI failure: a previous workflow run pushed a branch
+        // with the correct resync trailer, but the current branch (from main) still has
+        // the stale trailer. findSubtreeSplitInfo must only search HEAD, not --all.
+        
+        let upstream = try await createUpstreamRepo(tag: "v1.0")
+        defer { try? upstream.tearDown() }
+        
+        let local = try await GitRepositoryFixture()
+        defer { try? local.tearDown() }
+        
+        // Init and add subtree at v1.0
+        _ = try await harness.run(arguments: ["init"], workingDirectory: local.path)
+        let addResult = try await harness.run(
+            arguments: ["add", "--remote", fileURL(for: upstream), "--name", "lib",
+                        "--prefix", "Vendor/lib", "--ref", "v1.0"],
+            workingDirectory: local.path
+        )
+        #expect(addResult.exitCode == 0, "Add should succeed: \(addResult.stderr)")
+        
+        // Update to v2.0 normally (creates proper trailers)
+        try await addUpstreamUpdate(repo: upstream, tag: "v2.0", content: "// v2\n")
+        let update1 = try await harness.run(
+            arguments: ["update", "lib"],
+            workingDirectory: local.path
+        )
+        #expect(update1.exitCode == 0, "First update should succeed: \(update1.stdout)\(update1.stderr)")
+        let v2Commit = try await getTagCommit(repo: upstream, tag: "v2.0")
+        
+        // Simulate GitHub squash merge: replace update commit with one that has NO trailers
+        try await local.runGit(["commit", "--allow-empty", "-m",
+            "chore(deps): update subtree lib to v2.0 (#123)\n\nSquash merge lost trailers."])
+        
+        // Create a side branch that has the CORRECT trailer (simulates a previous CI run)
+        try await local.runGit(["checkout", "-b", "other-branch"])
+        try await local.runGit(["commit", "--allow-empty", "-m",
+            "Squashed 'Vendor/lib/' content from commit \(String(v2Commit.prefix(8)))\n\ngit-subtree-dir: Vendor/lib\ngit-subtree-split: \(v2Commit)"])
+        
+        // Go back to main — this branch has the stale v1.0 trailer
+        try await local.runGit(["checkout", "-"])
+        
+        // Add v3.0 upstream
+        try await addUpstreamUpdate(repo: upstream, tag: "v3.0", content: "// v3\n")
+        
+        // Update — must detect stale trailer on HEAD despite correct trailer on other-branch
+        let update2 = try await harness.run(
+            arguments: ["update", "lib"],
+            workingDirectory: local.path
+        )
+        
+        #expect(update2.exitCode == 0,
+                "Update should succeed (resync from HEAD, ignoring other branch): \(update2.stdout)\(update2.stderr)")
+        #expect(update2.stdout.contains("Updated lib"),
+                "Should show updated message: \(update2.stdout)")
+        
+        // Verify content was actually updated to v3
+        let content = try String(contentsOfFile: local.path.appending("Vendor/lib/src/main.c").string)
+        #expect(content.contains("v3"), "Content should be from v3.0")
+    }
 }
