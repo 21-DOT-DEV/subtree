@@ -147,13 +147,21 @@ public struct AddCommand: AsyncParsableCommand {
             Foundation.exit(1)
         }
         
-        // T040: Capture commit hash
-        let hashResult = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
-        guard hashResult.exitCode == 0 else {
-            print("❌ Failed to capture commit hash")
-            Foundation.exit(1)
+        // T040: Capture upstream commit hash from subtree trailer
+        // The split trailer contains the upstream commit hash, which is what we need
+        // for accurate up-to-date checks and stale trailer detection
+        let commitHash: String
+        if let splitInfo = try? await GitOperations.findSubtreeSplitInfo(prefix: finalPrefix) {
+            commitHash = splitInfo.splitHash
+        } else {
+            // Fallback: use local HEAD (should not happen with valid subtree add)
+            let hashResult = try await GitOperations.run(arguments: ["rev-parse", "HEAD"])
+            guard hashResult.exitCode == 0 else {
+                print("❌ Failed to capture commit hash")
+                Foundation.exit(1)
+            }
+            commitHash = hashResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let commitHash = hashResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // T041: Update config (create new entry)
         let refType = CommitMessageFormatter.deriveRefType(from: finalRef)

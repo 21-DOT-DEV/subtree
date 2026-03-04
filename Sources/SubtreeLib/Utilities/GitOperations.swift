@@ -222,22 +222,40 @@ public enum GitOperations {
     // T006: Git subtree pull wrapper for update operations
     /// Execute git subtree pull to update a subtree
     ///
-    /// Before pulling, checks for multi-trailer merge commits that can confuse
-    /// `git subtree`'s split hash detection. If found, creates a resync commit
-    /// with the correct single-prefix trailer to fix the issue transparently.
+    /// Before pulling, checks for split tracking issues that can confuse
+    /// `git subtree`'s split hash detection:
+    /// 1. Multi-trailer commits (multiple prefixes in one merge commit)
+    /// 2. Stale trailers (split hash doesn't match config, e.g. after GitHub squash merge)
+    /// 3. Missing trailers (no split tracking found at all)
+    ///
+    /// In all cases, creates a resync commit with the correct single-prefix trailer.
     ///
     /// - Parameters:
     ///   - prefix: Local directory path for the subtree
     ///   - remote: Git remote URL
     ///   - ref: Branch or tag to pull from
     ///   - squash: Whether to squash commits
+    ///   - expectedCommit: The upstream commit hash from subtree.yaml config (for stale detection)
     /// - Returns: Commit hash of the pulled changes
     /// - Throws: GitError if operation fails
-    public static func subtreePull(prefix: String, remote: String, ref: String, squash: Bool) async throws -> String {
-        // Pre-flight: detect and fix multi-trailer split tracking
-        if squash, let splitInfo = try? await findSubtreeSplitInfo(prefix: prefix) {
-            if splitInfo.isMultiTrailer {
-                try await createResyncCommit(prefix: prefix, splitHash: splitInfo.splitHash)
+    public static func subtreePull(prefix: String, remote: String, ref: String, squash: Bool, expectedCommit: String? = nil) async throws -> String {
+        // Pre-flight: detect and fix split tracking issues
+        if squash {
+            if let splitInfo = try? await findSubtreeSplitInfo(prefix: prefix) {
+                if splitInfo.isMultiTrailer {
+                    // Multi-trailer: git subtree might pick the wrong split hash
+                    try await createResyncCommit(prefix: prefix, splitHash: splitInfo.splitHash)
+                } else if let expected = expectedCommit, splitInfo.splitHash != expected,
+                          expected != splitInfo.commitHash {
+                    // Stale trailer: split hash doesn't match config
+                    // (e.g. GitHub squash merge dropped trailers from a later update)
+                    // The commitHash check handles backward compat: older AddCommand stored
+                    // the local merge commit hash, which would match splitInfo.commitHash
+                    try await createResyncCommit(prefix: prefix, splitHash: expected)
+                }
+            } else if let expected = expectedCommit {
+                // No trailer found at all: create one from config
+                try await createResyncCommit(prefix: prefix, splitHash: expected)
             }
         }
         
