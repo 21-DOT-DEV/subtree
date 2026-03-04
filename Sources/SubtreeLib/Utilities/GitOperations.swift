@@ -147,7 +147,7 @@ public enum GitOperations {
     public static func findSubtreeSplitInfo(prefix: String) async throws -> SubtreeSplitInfo? {
         // Find the most recent commit with a git-subtree-dir trailer matching this prefix
         let logResult = try await run(arguments: [
-            "log", "--all", "--grep=^git-subtree-dir: \(prefix)$",
+            "log", "HEAD", "--grep=^git-subtree-dir: \(prefix)$",
             "--format=%H%n%B", "-1"
         ])
         
@@ -267,7 +267,11 @@ public enum GitOperations {
         
         let result = try await run(arguments: args)
         guard result.exitCode == 0 else {
-            throw GitError.commandFailed("git subtree pull failed: \(result.stderr)")
+            let details = [result.stdout, result.stderr]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
+            throw GitError.commandFailed("git subtree pull failed: \(details)")
         }
         
         // Get the commit hash after pull
