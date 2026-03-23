@@ -50,13 +50,10 @@ Post-1.0 enhancements for advanced workflows, improved onboarding, and enterpris
 - **Dependencies**: Extract Command
 - **Notes**: Supports advanced monorepo scenarios with nested subtree structures
 
-### 6. Extract Flatten Mode (`--flatten` flag)
+### 6. ~~Extract Flatten Mode (`--flatten` flag)~~ IMPLEMENTED as `base: match`
 
-- **Purpose & user value**: Strip pattern prefix from extracted paths (e.g., `src/**/*.c` extracts `src/foo.c` to `dest/foo.c` instead of `dest/src/foo.c`)
-- **Success metrics**:
-  - Users can flatten path structure when needed without manual post-processing
-- **Dependencies**: Extract Command
-- **Notes**: Default behavior (009-multi-pattern-extraction) preserves full relative paths per industry best practices. `--flatten` restores pre-009 behavior for users who prefer prefix stripping. Handles filename conflicts with clear errors.
+- **Status**: Implemented
+- **Notes**: The `base` field (`root`/`match`) on extraction mappings replaces the proposed `--flatten` flag. `base: match` strips the literal prefix before the first glob/brace character from destination paths. `--base match` CLI flag for ad-hoc use. Default (`base: root` or omitted) preserves full relative paths for backward compatibility.
 
 ### 7. Extract Dry-Run Mode (`--dry-run` flag)
 

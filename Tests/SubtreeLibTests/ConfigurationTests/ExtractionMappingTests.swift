@@ -418,9 +418,121 @@ struct ExtractionMappingTests {
         let patterns = ["include/**/*.h", "src/**/*.c"]
         let destinations = ["Lib/", "Vendor/"]
         let mapping = ExtractionMapping(fromPatterns: patterns, toDestinations: destinations, exclude: ["**/internal/**"])
-        
+
         #expect(mapping.from == patterns)
         #expect(mapping.to == destinations)
         #expect(mapping.exclude == ["**/internal/**"])
+    }
+
+    // MARK: - Base Field (base:match prefix stripping)
+
+    @Test("Decode base: match from YAML")
+    func testDecodeBaseMatch() throws {
+        let yaml = """
+        from: "src/crc32c/{include,src}/**/*.{cc,h}"
+        to: "Sources/crc32c/"
+        base: match
+        """
+
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+
+        #expect(mapping.base == "match")
+        #expect(mapping.from == ["src/crc32c/{include,src}/**/*.{cc,h}"])
+        #expect(mapping.to == ["Sources/crc32c/"])
+    }
+
+    @Test("Decode base: root from YAML")
+    func testDecodeBaseRoot() throws {
+        let yaml = """
+        from: "ssl/**/*.c"
+        to: "Sources/libssl/"
+        base: root
+        """
+
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+
+        #expect(mapping.base == "root")
+    }
+
+    @Test("Decode without base field (nil, backward compatible)")
+    func testDecodeWithoutBase() throws {
+        let yaml = """
+        from: "include/**/*.h"
+        to: "vendor/"
+        """
+
+        let decoder = YAMLDecoder()
+        let mapping = try decoder.decode(ExtractionMapping.self, from: yaml)
+
+        #expect(mapping.base == nil, "Omitted base should decode as nil")
+    }
+
+    @Test("Reject invalid base value")
+    func testRejectInvalidBaseValue() throws {
+        let yaml = """
+        from: "src/**/*.c"
+        to: "vendor/"
+        base: flatten
+        """
+
+        let decoder = YAMLDecoder()
+
+        #expect(throws: Error.self) {
+            _ = try decoder.decode(ExtractionMapping.self, from: yaml)
+        }
+    }
+
+    @Test("Encode with base: match includes base in YAML")
+    func testEncodeBaseMatch() throws {
+        let mapping = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "match")
+
+        let encoder = YAMLEncoder()
+        let yaml = try encoder.encode(mapping)
+
+        #expect(yaml.contains("base: match"), "base: match should appear in YAML. Got: \(yaml)")
+    }
+
+    @Test("Encode without base omits base from YAML")
+    func testEncodeWithoutBase() throws {
+        let mapping = ExtractionMapping(from: "src/**/*.c", to: "vendor/")
+
+        let encoder = YAMLEncoder()
+        let yaml = try encoder.encode(mapping)
+
+        #expect(!yaml.contains("base"), "Nil base should not appear in YAML. Got: \(yaml)")
+    }
+
+    @Test("Equatable considers base field")
+    func testEquatableConsidersBase() {
+        let withMatch = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "match")
+        let withRoot = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "root")
+        let withNil = ExtractionMapping(from: "src/**/*.c", to: "vendor/")
+        let withMatch2 = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "match")
+
+        #expect(withMatch == withMatch2, "Same base should be equal")
+        #expect(withMatch != withRoot, "Different base should not be equal")
+        #expect(withMatch != withNil, "base:match should not equal nil base")
+        #expect(withRoot != withNil, "base:root should not equal nil base")
+    }
+
+    @Test("Codable round-trip preserves base field")
+    func testCodableRoundTripWithBase() throws {
+        let original = ExtractionMapping(
+            fromPatterns: ["include/**/*.h", "src/**/*.c"],
+            to: "vendor/",
+            exclude: ["**/test/**"],
+            base: "match"
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(ExtractionMapping.self, from: data)
+
+        #expect(decoded == original)
+        #expect(decoded.base == "match")
     }
 }

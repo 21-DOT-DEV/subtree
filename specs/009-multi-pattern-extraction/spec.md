@@ -147,4 +147,4 @@ As a developer, I want to be warned when a pattern matches no files so that I ca
 
 - Q: When using `--persist` with multiple patterns, what should happen if a mapping to the same destination already exists? → A: Error — reject with "mapping to this destination already exists" (consistent with current extract behavior).
 
-- Q: Should pattern prefix be stripped from extracted paths (e.g., `src/**/*.c` → `dest/foo.c`) or preserved (→ `dest/src/foo.c`)? → A: **Preserve full paths** (industry standard, matches rsync/cp behavior). Pattern prefix stripping was the original 008 behavior but is non-standard. A future `--flatten` flag (see backlog) will provide prefix stripping for users who prefer it.
+- Q: Should pattern prefix be stripped from extracted paths (e.g., `src/**/*.c` → `dest/foo.c`) or preserved (→ `dest/src/foo.c`)? → A: **Preserve full paths by default** (`base: root`). Users can opt into prefix stripping with `base: match` (or `--base match`), which strips the literal prefix before the first glob/brace character from destination paths.

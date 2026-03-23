@@ -1834,4 +1834,293 @@ struct ExtractIntegrationTests {
         #expect(result.stderr.contains("empty") || result.stderr.contains("Empty"),
                 "Error should mention empty alternative: \(result.stderr)")
     }
+
+    // MARK: - Base Mode Integration Tests
+
+    @Test("Ad-hoc extraction with --base match strips literal prefix")
+    func testAdHocExtractionBaseMatch() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+
+        // Create subtree with nested structure mimicking bitcoin/crc32c
+        let subtreePrefix = "vendor/bitcoin"
+        let files = [
+            "\(subtreePrefix)/src/crc32c/include/crc32c/crc32c.h",
+            "\(subtreePrefix)/src/crc32c/src/crc32c.cc",
+            "\(subtreePrefix)/src/crc32c/src/crc32c_arm64.cc",
+        ]
+
+        for file in files {
+            let fullPath = fixture.path.string + "/" + file
+            let dir = (fullPath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try "// Code".write(toFile: fullPath, atomically: true, encoding: .utf8)
+        }
+
+        try writeSubtreeConfig(
+            name: "bitcoin",
+            remote: "https://example.com/bitcoin.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Add subtree"])
+
+        // Extract with --base match: each --from pattern strips its own literal prefix independently
+        // --from "src/crc32c/include/**/*.h" → prefix "src/crc32c/include/" stripped → "crc32c/crc32c.h"
+        // --from "src/crc32c/src/**/*.cc" → prefix "src/crc32c/src/" stripped → "crc32c.cc"
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "bitcoin",
+                        "--from", "src/crc32c/include/**/*.h",
+                        "--from", "src/crc32c/src/**/*.cc",
+                        "--to", "Sources/crc32c/",
+                        "--base", "match"],
+            workingDirectory: fixture.path
+        )
+
+        #expect(result.exitCode == 0, "Extract should succeed. stderr: \(result.stderr)")
+
+        // Per-pattern independent prefix stripping:
+        // "src/crc32c/include/**/*.h" strips "src/crc32c/include/" → "crc32c/crc32c.h"
+        // "src/crc32c/src/**/*.cc" strips "src/crc32c/src/" → "crc32c.cc", "crc32c_arm64.cc"
+        let expectedFiles = [
+            "Sources/crc32c/crc32c/crc32c.h",
+            "Sources/crc32c/crc32c.cc",
+            "Sources/crc32c/crc32c_arm64.cc",
+        ]
+
+        for file in expectedFiles {
+            let fullPath = fixture.path.string + "/" + file
+            #expect(FileManager.default.fileExists(atPath: fullPath),
+                    "File \(file) should exist (per-pattern prefix stripped). stderr: \(result.stderr)")
+        }
+
+        // Verify old (un-stripped) paths do NOT exist
+        let unexpectedFiles = [
+            "Sources/crc32c/src/crc32c/include/crc32c/crc32c.h",
+            "Sources/crc32c/src/crc32c/src/crc32c.cc",
+        ]
+
+        for file in unexpectedFiles {
+            let fullPath = fixture.path.string + "/" + file
+            #expect(!FileManager.default.fileExists(atPath: fullPath),
+                    "File \(file) should NOT exist (prefix should be stripped)")
+        }
+    }
+
+    @Test("Brace expansion with --base match strips original (pre-expansion) prefix")
+    func testBraceExpansionBaseMatch() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+
+        let subtreePrefix = "vendor/lib"
+        let files = [
+            "\(subtreePrefix)/src/crc32c/include/header.h",
+            "\(subtreePrefix)/src/crc32c/src/impl.c",
+        ]
+
+        for file in files {
+            let fullPath = fixture.path.string + "/" + file
+            let dir = (fullPath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try "// Code".write(toFile: fullPath, atomically: true, encoding: .utf8)
+        }
+
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Add subtree"])
+
+        // Use brace expansion: {include,src} - prefix is "src/crc32c/"
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib",
+                        "--from", "src/crc32c/{include,src}/**/*.{c,h}",
+                        "--to", "Sources/crc32c/",
+                        "--base", "match"],
+            workingDirectory: fixture.path
+        )
+
+        #expect(result.exitCode == 0, "Extract should succeed. stderr: \(result.stderr)")
+
+        // Prefix "src/crc32c/" should be stripped (computed from original pattern before expansion)
+        let expectedFiles = [
+            "Sources/crc32c/include/header.h",
+            "Sources/crc32c/src/impl.c",
+        ]
+
+        for file in expectedFiles {
+            let fullPath = fixture.path.string + "/" + file
+            #expect(FileManager.default.fileExists(atPath: fullPath),
+                    "File \(file) should exist (brace prefix stripped). stderr: \(result.stderr)")
+        }
+    }
+
+    @Test("--persist --base match saves base field to YAML")
+    func testPersistBaseMatchSavesToConfig() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+
+        let subtreePrefix = "vendor/lib"
+        let filePath = "\(subtreePrefix)/src/file.c"
+        let fullFilePath = fixture.path.string + "/" + filePath
+        let dir = (fullFilePath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        try "// Code".write(toFile: fullFilePath, atomically: true, encoding: .utf8)
+
+        try writeSubtreeConfig(
+            name: "lib",
+            remote: "https://example.com/lib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Add subtree"])
+
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "lib",
+                        "--from", "src/**/*.c",
+                        "--to", "Sources/",
+                        "--base", "match",
+                        "--persist"],
+            workingDirectory: fixture.path
+        )
+
+        #expect(result.exitCode == 0, "Extract with --persist should succeed. stderr: \(result.stderr)")
+
+        // Read config and verify base field was saved
+        let configContent = try String(contentsOfFile: fixture.path.string + "/subtree.yaml", encoding: .utf8)
+        #expect(configContent.contains("base: match"),
+                "Config should contain 'base: match'. Config:\n\(configContent)")
+    }
+
+    @Test("Bulk extraction reads and respects base: match from saved config")
+    func testBulkExtractionRespectsBaseMatch() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+
+        let subtreePrefix = "vendor/mylib"
+        let files = [
+            "\(subtreePrefix)/src/core/engine.c",
+            "\(subtreePrefix)/src/utils/helper.c",
+        ]
+
+        for file in files {
+            let fullPath = fixture.path.string + "/" + file
+            let dir = (fullPath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try "// Code".write(toFile: fullPath, atomically: true, encoding: .utf8)
+        }
+
+        // Write config with base: match directly in YAML
+        let yaml = """
+        subtrees:
+          - name: mylib
+            remote: https://example.com/mylib.git
+            prefix: \(subtreePrefix)
+            commit: abc123
+            extractions:
+              - from: "src/**/*.c"
+                to: Sources/MyLib/
+                base: match
+        """
+        try yaml.write(toFile: fixture.path.string + "/subtree.yaml", atomically: true, encoding: .utf8)
+
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Add subtree with base:match config"])
+
+        // Run bulk extraction
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "mylib"],
+            workingDirectory: fixture.path
+        )
+
+        #expect(result.exitCode == 0, "Bulk extract should succeed. stderr: \(result.stderr)")
+
+        // Verify "src/" prefix was stripped (base: match)
+        let expectedFiles = [
+            "Sources/MyLib/core/engine.c",   // NOT Sources/MyLib/src/core/engine.c
+            "Sources/MyLib/utils/helper.c",
+        ]
+
+        for file in expectedFiles {
+            let fullPath = fixture.path.string + "/" + file
+            #expect(FileManager.default.fileExists(atPath: fullPath),
+                    "File \(file) should exist (bulk with base:match). stderr: \(result.stderr)")
+        }
+
+        // Verify un-stripped paths don't exist
+        let unexpectedFile = "Sources/MyLib/src/core/engine.c"
+        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/" + unexpectedFile),
+                "Un-stripped path should NOT exist")
+    }
+
+    @Test("Default behavior (no --base) preserves full paths (regression guard)")
+    func testDefaultBehaviorPreservesFullPaths() async throws {
+        let harness = TestHarness()
+        let fixture = try await GitRepositoryFixture()
+        defer { try? fixture.tearDown() }
+
+        let subtreePrefix = "vendor/mylib"
+        let files = [
+            "\(subtreePrefix)/src/core/engine.c",
+            "\(subtreePrefix)/src/utils/helper.c",
+        ]
+
+        for file in files {
+            let fullPath = fixture.path.string + "/" + file
+            let dir = (fullPath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try "// Code".write(toFile: fullPath, atomically: true, encoding: .utf8)
+        }
+
+        try writeSubtreeConfig(
+            name: "mylib",
+            remote: "https://example.com/mylib.git",
+            prefix: subtreePrefix,
+            commit: "abc123",
+            to: fixture.path.string + "/subtree.yaml"
+        )
+
+        try await fixture.runGit(["add", "."])
+        try await fixture.runGit(["commit", "-m", "Add subtree"])
+
+        // Extract WITHOUT --base (default = base:root, preserve full paths)
+        let result = try await harness.run(
+            arguments: ["extract", "--name", "mylib", "--from", "src/**/*.c", "--to", "Sources/MyLib/"],
+            workingDirectory: fixture.path
+        )
+
+        #expect(result.exitCode == 0, "Extract should succeed. stderr: \(result.stderr)")
+
+        // Full paths should be preserved (src/ included)
+        let expectedFiles = [
+            "Sources/MyLib/src/core/engine.c",
+            "Sources/MyLib/src/utils/helper.c",
+        ]
+
+        for file in expectedFiles {
+            let fullPath = fixture.path.string + "/" + file
+            #expect(FileManager.default.fileExists(atPath: fullPath),
+                    "File \(file) should exist (default preserves full paths). stderr: \(result.stderr)")
+        }
+
+        // Stripped paths should NOT exist (we didn't use --base match)
+        let unexpectedFile = "Sources/MyLib/core/engine.c"
+        #expect(!FileManager.default.fileExists(atPath: fixture.path.string + "/" + unexpectedFile),
+                "Stripped path should NOT exist without --base match")
+    }
 }

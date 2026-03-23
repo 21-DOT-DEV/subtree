@@ -452,21 +452,117 @@ struct ExtractCommandTests {
         // Zero-match error should mention pattern
         let pattern = "*.xyz"
         let prefix = "vendor/lib"
-        
+
         let errorMessage = "No files matched pattern '\(pattern)' in subtree"
         #expect(errorMessage.contains(pattern), "Should include pattern in error")
-        
+
         // Suggestions should be actionable
         let suggestions = [
             "Check pattern syntax",
             "Verify files exist in \(prefix)/",
             "Try a broader pattern"
         ]
-        
+
         for suggestion in suggestions {
             #expect(suggestion.count > 0, "Suggestion should not be empty")
             #expect(suggestion.contains("Check") || suggestion.contains("Verify") || suggestion.contains("Try"),
                    "Should use actionable verbs")
         }
+    }
+
+    // MARK: - Base Mode Prefix Stripping Tests
+
+    @Test("base:match strips literal prefix from destination paths")
+    func testDirectoryStructurePreservationBaseMatch() {
+        struct TestCase {
+            let pattern: String
+            let matchedPath: String
+            let expectedDest: String
+        }
+
+        let testCases = [
+            // Simple prefix stripping
+            TestCase(pattern: "src/**/*.c", matchedPath: "src/core/file.c", expectedDest: "core/file.c"),
+            TestCase(pattern: "docs/api/**/*.md", matchedPath: "docs/api/guide/README.md", expectedDest: "guide/README.md"),
+            // No prefix to strip (pattern starts with glob)
+            TestCase(pattern: "**/*.txt", matchedPath: "any/path/file.txt", expectedDest: "any/path/file.txt"),
+            // Multi-level prefix
+            TestCase(pattern: "src/crc32c/include/**/*.h", matchedPath: "src/crc32c/include/crc32c/crc32c.h", expectedDest: "crc32c/crc32c.h"),
+        ]
+
+        for testCase in testCases {
+            let prefix = extractLiteralPrefix(from: testCase.pattern)
+            let result = destinationRelativePath(
+                for: testCase.matchedPath,
+                originalPatternPrefix: prefix,
+                baseMode: "match"
+            )
+
+            #expect(result == testCase.expectedDest,
+                   "base:match pattern '\(testCase.pattern)' on '\(testCase.matchedPath)' should produce '\(testCase.expectedDest)', got '\(result)'")
+        }
+    }
+
+    @Test("Pre-expansion prefix computation stops at brace")
+    func testPreExpansionPrefixWithBraces() {
+        // Brace should stop prefix extraction at the component containing it
+        let pattern1 = "src/crc32c/{include,src}/**/*.h"
+        let prefix1 = extractLiteralPrefix(from: pattern1)
+        #expect(prefix1 == "src/crc32c/", "Prefix should stop before brace component. Got: '\(prefix1)'")
+
+        let pattern2 = "{include,src}/**/*.h"
+        let prefix2 = extractLiteralPrefix(from: pattern2)
+        #expect(prefix2 == "", "Brace at start should produce empty prefix. Got: '\(prefix2)'")
+
+        let pattern3 = "a/b/c/{x,y}/**"
+        let prefix3 = extractLiteralPrefix(from: pattern3)
+        #expect(prefix3 == "a/b/c/", "Multi-level prefix stops at brace. Got: '\(prefix3)'")
+    }
+
+    @Test("base:root preserves full path (no stripping)")
+    func testBaseRootPreservesFullPath() {
+        let prefix = extractLiteralPrefix(from: "src/**/*.c")
+
+        let resultRoot = destinationRelativePath(
+            for: "src/core/file.c",
+            originalPatternPrefix: prefix,
+            baseMode: "root"
+        )
+        #expect(resultRoot == "src/core/file.c", "base:root should preserve full path")
+
+        let resultNil = destinationRelativePath(
+            for: "src/core/file.c",
+            originalPatternPrefix: prefix,
+            baseMode: nil
+        )
+        #expect(resultNil == "src/core/file.c", "nil base should preserve full path")
+    }
+
+    @Test("Duplicate detection considers base field")
+    func testDuplicateDetectionConsidersBase() {
+        let withMatch = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "match")
+        let withRoot = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "root")
+        let withNil = ExtractionMapping(from: "src/**/*.c", to: "vendor/")
+
+        #expect(withMatch != withRoot, "Different base should not match for dedup")
+        #expect(withMatch != withNil, "base:match should not match nil for dedup")
+        #expect(withRoot != withNil, "base:root should not match nil for dedup")
+
+        // Same everything including base
+        let withMatch2 = ExtractionMapping(from: "src/**/*.c", to: "vendor/", base: "match")
+        #expect(withMatch == withMatch2, "Same base should be detected as duplicate")
+    }
+
+    // Helper: mirrors ExtractCommand.destinationRelativePath
+    private func destinationRelativePath(
+        for relativePath: String,
+        originalPatternPrefix: String,
+        baseMode: String?
+    ) -> String {
+        guard baseMode == "match" else { return relativePath }
+        if !originalPatternPrefix.isEmpty && relativePath.hasPrefix(originalPatternPrefix) {
+            return String(relativePath.dropFirst(originalPatternPrefix.count))
+        }
+        return relativePath
     }
 }

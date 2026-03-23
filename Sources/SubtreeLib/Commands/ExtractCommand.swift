@@ -152,6 +152,10 @@ public struct ExtractCommand: AsyncParsableCommand {
     // T066: --exclude repeatable flag for exclusion patterns
     @Option(name: .long, help: "Glob pattern to exclude files (can be repeated)")
     var exclude: [String] = []
+
+    // --base flag for path base mode (controls destination path structure)
+    @Option(name: .long, help: "Path base mode: 'root' (default, full path) or 'match' (strip literal prefix)")
+    var base: String?
     
     // T091: --persist flag to save extraction mapping
     @Flag(name: .long, help: "Save this extraction mapping to subtree.yaml for future use")
@@ -173,6 +177,14 @@ public struct ExtractCommand: AsyncParsableCommand {
             writeStderr("❌ Error: --clean and --persist cannot be used together\n")
             writeStderr("   --clean removes files, --persist saves mappings for extraction\n")
             Foundation.exit(2)
+        }
+
+        // Validate --base value
+        if let baseValue = base {
+            guard baseValue == "root" || baseValue == "match" else {
+                writeStderr("❌ Error: --base must be 'root' or 'match', got '\(baseValue)'\n")
+                Foundation.exit(2)
+            }
         }
         
         // T023: Route to clean mode if --clean flag is set
@@ -249,16 +261,19 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         // T039: Expand brace patterns in --from before matching (011-brace-expansion)
         let expandedFromPatterns = expandBracePatterns(from)
-        
+
         // T040: Expand brace patterns in --exclude before matching (011-brace-expansion)
         let expandedExcludePatterns = expandBracePatterns(exclude)
-        
+
+        // Build prefix map for base:match stripping (traces expanded patterns to original prefixes)
+        let expandedPrefixMap = buildExpandedPrefixMap(from: from)
+
         // T023-T025 + T040: Multi-pattern matching with deduplication and per-pattern tracking
         // Process all --from patterns and collect unique files
-        var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
-        var seenPaths = Set<String>()  // T024: Deduplicate by relative path
+        var allMatchedFiles: [(sourcePath: String, relativePath: String, destRelativePath: String)] = []
+        var seenPaths = Set<String>()  // T024: Deduplicate by destination-relative path
         var patternMatchCounts: [(pattern: String, count: Int)] = []  // T040: Per-pattern tracking
-        
+
         for pattern in expandedFromPatterns {
             let matchedFiles = try await findMatchingFiles(
                 in: subtree.prefix,
@@ -266,19 +281,28 @@ public struct ExtractCommand: AsyncParsableCommand {
                 excludePatterns: expandedExcludePatterns,
                 gitRoot: gitRoot
             )
-            
+
+            let originalPrefix = expandedPrefixMap[pattern] ?? ""
+
             // T040: Track match count for this pattern
             var patternUniqueCount = 0
-            
+
             // T024: Add files not already seen (deduplication)
             for file in matchedFiles {
-                if !seenPaths.contains(file.relativePath) {
-                    seenPaths.insert(file.relativePath)
-                    allMatchedFiles.append(file)
+                let destRelPath = destinationRelativePath(
+                    for: file.relativePath,
+                    originalPatternPrefix: originalPrefix,
+                    baseMode: self.base
+                )
+                // Dedup key: use stripped path for base:match, original for base:root/nil
+                let dedupKey = self.base == "match" ? destRelPath : file.relativePath
+                if !seenPaths.contains(dedupKey) {
+                    seenPaths.insert(dedupKey)
+                    allMatchedFiles.append((file.sourcePath, file.relativePath, destRelPath))
                     patternUniqueCount += 1
                 }
             }
-            
+
             patternMatchCounts.append((pattern: pattern, count: patternUniqueCount))
         }
         
@@ -301,38 +325,40 @@ public struct ExtractCommand: AsyncParsableCommand {
         
         // T047-T049: Fail-fast - validate ALL destinations upfront BEFORE copying to ANY
         if !force {
+            // Build 2-tuple view using destRelativePath for destination path construction
+            let destMappedFiles = allMatchedFiles.map { (sourcePath: $0.sourcePath, relativePath: $0.destRelativePath) }
             var allTrackedFiles: [String] = []
             for normalizedDest in normalizedDestinations {
                 let fullDestPath = gitRoot + "/" + normalizedDest
                 let trackedFiles = try await checkForTrackedFiles(
-                    matchedFiles: allMatchedFiles,
+                    matchedFiles: destMappedFiles,
                     fullDestPath: fullDestPath,
                     gitRoot: gitRoot
                 )
                 allTrackedFiles.append(contentsOf: trackedFiles)
             }
-            
+
             if !allTrackedFiles.isEmpty {
                 // T049: Show all conflicts across all destinations
                 try handleOverwriteProtection(trackedFiles: allTrackedFiles)
             }
         }
-        
+
         // T037: Fan-out extraction to all destinations (after validation passes)
         for normalizedDest in normalizedDestinations {
             // T074: Destination directory creation
             let fullDestPath = gitRoot + "/" + normalizedDest
             try createDestinationDirectory(at: fullDestPath)
-            
+
             // T072: File copying with FileManager
-            // T073: Directory structure preservation
+            // T073: Directory structure preservation; base:match stripping applied via destRelativePath
             var copiedCount = 0
-            for (sourcePath, relativePath) in allMatchedFiles {
-                let destFilePath = fullDestPath + "/" + relativePath
+            for (sourcePath, _, destRelativePath) in allMatchedFiles {
+                let destFilePath = fullDestPath + "/" + destRelativePath
                 try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
                 copiedCount += 1
             }
-            
+
             // T038: Per-destination success output (FR-017)
             print("✅ Extracted \(copiedCount) file(s) to '\(normalizedDest)'")
         }
@@ -344,6 +370,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                 patterns: from,
                 destinations: deduplicatedDestinations,  // T041: Use deduplicated destinations array
                 excludePatterns: exclude,
+                baseMode: self.base,
                 subtreeName: subtreeName,
                 configPath: configPath
             )
@@ -619,20 +646,22 @@ public struct ExtractCommand: AsyncParsableCommand {
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(mapping.from)
         let expandedExcludePatterns = expandBracePatterns(mapping.exclude ?? [])
-        
+
         // T044 + T052: Fan-out clean to all destinations
         var totalDeletedCount = 0
-        
+
         for normalizedDest in normalizedDestinations {
             let fullDestPath = gitRoot + "/" + normalizedDest
-            
-            // Find files to clean
+
+            // Find files to clean (pass base mode and original patterns for reverse mapping)
             let filesToClean = try await findFilesToClean(
                 patterns: expandedFromPatterns,
                 excludePatterns: expandedExcludePatterns,
                 subtreePrefix: subtree.prefix,
                 destinationPath: fullDestPath,
-                gitRoot: gitRoot
+                gitRoot: gitRoot,
+                baseMode: mapping.base,
+                originalPatterns: mapping.from
             )
             
             // Zero files = success for this destination
@@ -733,18 +762,20 @@ public struct ExtractCommand: AsyncParsableCommand {
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(from)
         let expandedExcludePatterns = expandBracePatterns(exclude)
-        
+
         // T043-T046: Fan-out clean to all destinations
         for normalizedDest in normalizedDestinations {
             let fullDestPath = gitRoot + "/" + normalizedDest
-            
-            // T025: Find files to clean in destination
+
+            // T025: Find files to clean in destination (pass base mode for reverse mapping)
             let filesToClean = try await findFilesToClean(
                 patterns: expandedFromPatterns,
                 excludePatterns: expandedExcludePatterns,
                 subtreePrefix: subtree.prefix,
                 destinationPath: fullDestPath,
-                gitRoot: gitRoot
+                gitRoot: gitRoot,
+                baseMode: self.base,
+                originalPatterns: from
             )
             
             // BC-007: Zero files matched = success for this destination
@@ -813,55 +844,125 @@ public struct ExtractCommand: AsyncParsableCommand {
     }
     
     /// T025: Find files in destination that match source patterns
+    ///
+    /// When `baseMode` is "match", destination files have had their literal prefix stripped.
+    /// To reconstruct source paths for checksum validation, we prepend the original prefix back.
+    ///
+    /// - Parameters:
+    ///   - patterns: Expanded glob patterns (post-brace-expansion)
+    ///   - excludePatterns: Expanded exclusion patterns
+    ///   - subtreePrefix: Subtree prefix directory (e.g., "Vendor/bitcoin")
+    ///   - destinationPath: Full destination directory path
+    ///   - gitRoot: Git repository root
+    ///   - baseMode: Optional base mode ("match" or "root"/nil)
+    ///   - originalPatterns: Original (pre-expansion) patterns for prefix computation
     private func findFilesToClean(
         patterns: [String],
         excludePatterns: [String],
         subtreePrefix: String,
         destinationPath: String,
-        gitRoot: String
+        gitRoot: String,
+        baseMode: String? = nil,
+        originalPatterns: [String] = []
     ) async throws -> [CleanFileEntry] {
         var allFiles: [CleanFileEntry] = []
         var seenPaths = Set<String>()
-        
+
         // Create exclusion matchers
         let excludeMatchers = try excludePatterns.map { try GlobMatcher(pattern: $0) }
-        
+
+        // Build prefix map for base:match reverse mapping
+        let expandedPrefixMap: [String: String]
+        if baseMode == "match" && !originalPatterns.isEmpty {
+            expandedPrefixMap = buildExpandedPrefixMap(from: originalPatterns)
+        } else {
+            expandedPrefixMap = [:]
+        }
+
         for pattern in patterns {
             let matcher = try GlobMatcher(pattern: pattern)
             let patternPrefix = extractLiteralPrefix(from: pattern)
-            
+
             // Scan destination directory for matching files
             var matchedFiles: [(String, String)] = []
-            
+
             // Check if destination exists
             guard FileManager.default.fileExists(atPath: destinationPath) else {
                 continue
             }
-            
-            try scanDirectory(
-                at: destinationPath,
-                relativeTo: destinationPath,
-                matcher: matcher,
-                excludeMatchers: excludeMatchers,
-                patternPrefix: patternPrefix,
-                results: &matchedFiles
-            )
-            
-            // Convert to CleanFileEntry with source paths
-            let sourcePrefixPath = gitRoot + "/" + subtreePrefix
-            for (destPath, relativePath) in matchedFiles {
-                if !seenPaths.contains(relativePath) {
-                    seenPaths.insert(relativePath)
-                    let sourcePath = sourcePrefixPath + "/" + relativePath
-                    allFiles.append(CleanFileEntry(
-                        sourcePath: sourcePath,
-                        destinationPath: destPath,
-                        relativePath: relativePath
-                    ))
+
+            // For base:match, destination files are stored at stripped paths.
+            // We need to match against stripped patterns too.
+            if baseMode == "match" {
+                let originalPrefix = expandedPrefixMap[pattern] ?? ""
+                // Build a matcher for the stripped pattern (remove literal prefix)
+                let strippedPattern: String
+                if !originalPrefix.isEmpty && pattern.hasPrefix(originalPrefix) {
+                    strippedPattern = String(pattern.dropFirst(originalPrefix.count))
+                } else {
+                    strippedPattern = pattern
+                }
+                let strippedMatcher = try GlobMatcher(pattern: strippedPattern)
+                let strippedPatternPrefix = extractLiteralPrefix(from: strippedPattern)
+
+                // Build stripped exclusion matchers
+                let strippedExcludeMatchers = try excludePatterns.compactMap { excludePattern -> GlobMatcher? in
+                    if !originalPrefix.isEmpty && excludePattern.hasPrefix(originalPrefix) {
+                        return try GlobMatcher(pattern: String(excludePattern.dropFirst(originalPrefix.count)))
+                    }
+                    return try GlobMatcher(pattern: excludePattern)
+                }
+
+                try scanDirectory(
+                    at: destinationPath,
+                    relativeTo: destinationPath,
+                    matcher: strippedMatcher,
+                    excludeMatchers: strippedExcludeMatchers,
+                    patternPrefix: strippedPatternPrefix,
+                    results: &matchedFiles
+                )
+
+                // Convert to CleanFileEntry: prepend original prefix to reconstruct source path
+                let sourcePrefixPath = gitRoot + "/" + subtreePrefix
+                for (destPath, relativePath) in matchedFiles {
+                    if !seenPaths.contains(relativePath) {
+                        seenPaths.insert(relativePath)
+                        // Reconstruct the full source-relative path by prepending the stripped prefix
+                        let sourceRelativePath = originalPrefix + relativePath
+                        let sourcePath = sourcePrefixPath + "/" + sourceRelativePath
+                        allFiles.append(CleanFileEntry(
+                            sourcePath: sourcePath,
+                            destinationPath: destPath,
+                            relativePath: relativePath
+                        ))
+                    }
+                }
+            } else {
+                try scanDirectory(
+                    at: destinationPath,
+                    relativeTo: destinationPath,
+                    matcher: matcher,
+                    excludeMatchers: excludeMatchers,
+                    patternPrefix: patternPrefix,
+                    results: &matchedFiles
+                )
+
+                // Convert to CleanFileEntry with source paths
+                let sourcePrefixPath = gitRoot + "/" + subtreePrefix
+                for (destPath, relativePath) in matchedFiles {
+                    if !seenPaths.contains(relativePath) {
+                        seenPaths.insert(relativePath)
+                        let sourcePath = sourcePrefixPath + "/" + relativePath
+                        allFiles.append(CleanFileEntry(
+                            sourcePath: sourcePath,
+                            destinationPath: destPath,
+                            relativePath: relativePath
+                        ))
+                    }
                 }
             }
         }
-        
+
         return allFiles
     }
     
@@ -914,11 +1015,14 @@ public struct ExtractCommand: AsyncParsableCommand {
         // 011-brace-expansion: Expand brace patterns before matching
         let expandedFromPatterns = expandBracePatterns(mapping.from)
         let expandedExcludePatterns = expandBracePatterns(mapping.exclude ?? [])
-        
+
+        // Build prefix map for base:match stripping (uses mapping.base from config)
+        let expandedPrefixMap = buildExpandedPrefixMap(from: mapping.from)
+
         // T026: Find matching files from ALL patterns (multi-pattern support)
-        var allMatchedFiles: [(sourcePath: String, relativePath: String)] = []
-        var seenPaths = Set<String>()  // Deduplicate by relative path
-        
+        var allMatchedFiles: [(sourcePath: String, relativePath: String, destRelativePath: String)] = []
+        var seenPaths = Set<String>()  // Deduplicate by destination-relative path
+
         for pattern in expandedFromPatterns {
             let matchedFiles = try await findMatchingFiles(
                 in: subtree.prefix,
@@ -926,33 +1030,42 @@ public struct ExtractCommand: AsyncParsableCommand {
                 excludePatterns: expandedExcludePatterns,
                 gitRoot: gitRoot
             )
-            
+
+            let originalPrefix = expandedPrefixMap[pattern] ?? ""
+
             // Add files not already seen (deduplication)
             for file in matchedFiles {
-                if !seenPaths.contains(file.relativePath) {
-                    seenPaths.insert(file.relativePath)
-                    allMatchedFiles.append(file)
+                let destRelPath = destinationRelativePath(
+                    for: file.relativePath,
+                    originalPatternPrefix: originalPrefix,
+                    baseMode: mapping.base
+                )
+                let dedupKey = mapping.base == "match" ? destRelPath : file.relativePath
+                if !seenPaths.contains(dedupKey) {
+                    seenPaths.insert(dedupKey)
+                    allMatchedFiles.append((file.sourcePath, file.relativePath, destRelPath))
                 }
             }
         }
-        
+
         guard !allMatchedFiles.isEmpty else {
             return 0  // No files matched, but not an error
         }
-        
+
         // T047-T049 + T053: Fail-fast - validate ALL destinations upfront BEFORE copying to ANY
         if !force {
+            let destMappedFiles = allMatchedFiles.map { (sourcePath: $0.sourcePath, relativePath: $0.destRelativePath) }
             var allTrackedFiles: [String] = []
             for normalizedDest in normalizedDestinations {
                 let fullDestPath = gitRoot + "/" + normalizedDest
                 let trackedFiles = try await checkForTrackedFiles(
-                    matchedFiles: allMatchedFiles,
+                    matchedFiles: destMappedFiles,
                     fullDestPath: fullDestPath,
                     gitRoot: gitRoot
                 )
                 allTrackedFiles.append(contentsOf: trackedFiles)
             }
-            
+
             if !allTrackedFiles.isEmpty {
                 // For bulk mode, throw an error that will be caught and reported
                 struct OverwriteProtectionError: Error, LocalizedError {
@@ -964,22 +1077,22 @@ public struct ExtractCommand: AsyncParsableCommand {
                 throw OverwriteProtectionError(trackedFiles: allTrackedFiles)
             }
         }
-        
+
         // T040: Fan-out to all destinations (after validation passes)
         var totalCopiedCount = 0
         for normalizedDest in normalizedDestinations {
             // Create destination directory
             let fullDestPath = gitRoot + "/" + normalizedDest
             try createDestinationDirectory(at: fullDestPath)
-            
-            // Copy files to this destination
-            for (sourcePath, relativePath) in allMatchedFiles {
-                let destFilePath = fullDestPath + "/" + relativePath
+
+            // Copy files to this destination; base:match stripping applied via destRelativePath
+            for (sourcePath, _, destRelativePath) in allMatchedFiles {
+                let destFilePath = fullDestPath + "/" + destRelativePath
                 try copyFilePreservingStructure(from: sourcePath, to: destFilePath)
                 totalCopiedCount += 1
             }
         }
-        
+
         return totalCopiedCount
     }
     
@@ -1110,6 +1223,47 @@ public struct ExtractCommand: AsyncParsableCommand {
         return expandedPatterns
     }
     
+    // MARK: - Base Mode Helpers
+
+    /// Build mapping from each expanded pattern to the literal prefix of its original pattern.
+    ///
+    /// When `base: match` is active, we strip the literal prefix from destination paths.
+    /// Since brace expansion produces multiple patterns from a single original, we need
+    /// to trace each expanded pattern back to its original's literal prefix.
+    ///
+    /// - Parameter originalPatterns: The user-provided patterns (pre-expansion)
+    /// - Returns: Dictionary mapping expanded pattern strings to their original literal prefix
+    private func buildExpandedPrefixMap(from originalPatterns: [String]) -> [String: String] {
+        var map: [String: String] = [:]
+        for original in originalPatterns {
+            let prefix = extractLiteralPrefix(from: original)
+            let expanded = expandBracePatterns([original])
+            for exp in expanded {
+                map[exp] = prefix
+            }
+        }
+        return map
+    }
+
+    /// Compute destination-relative path, optionally stripping the original pattern's literal prefix.
+    ///
+    /// - Parameters:
+    ///   - relativePath: Full relative path from subtree root (e.g., "src/crc32c/include/crc32c.h")
+    ///   - originalPatternPrefix: Literal prefix of the original pattern (e.g., "src/crc32c/")
+    ///   - baseMode: "match" to strip prefix, "root" or nil to preserve full path
+    /// - Returns: Path to use at destination (stripped or original)
+    private func destinationRelativePath(
+        for relativePath: String,
+        originalPatternPrefix: String,
+        baseMode: String?
+    ) -> String {
+        guard baseMode == "match" else { return relativePath }
+        if !originalPatternPrefix.isEmpty && relativePath.hasPrefix(originalPatternPrefix) {
+            return String(relativePath.dropFirst(originalPatternPrefix.count))
+        }
+        return relativePath
+    }
+
     // MARK: - T070: Glob Pattern Matching
     
     /// Find all files matching the glob pattern
@@ -1216,8 +1370,7 @@ public struct ExtractCommand: AsyncParsableCommand {
                     // T071: Check exclusion patterns
                     let excluded = excludeMatchers.contains { $0.matches(relativePath) }
                     if !excluded {
-                        // Preserve full relative path (industry standard behavior)
-                        // Future: --flatten flag could strip pattern prefix
+                        // Full relative path preserved here; base:match stripping applied in copy loop
                         results.append((itemPath, relativePath))
                     }
                 }
@@ -1282,6 +1435,7 @@ public struct ExtractCommand: AsyncParsableCommand {
     ///   - patterns: Array of glob patterns (from field)
     ///   - destinations: Destination paths (to field) - T041: now supports array
     ///   - excludePatterns: Exclusion patterns (exclude field)
+    ///   - baseMode: Optional base mode ("root" or "match")
     ///   - subtreeName: Name of subtree to save mapping to
     ///   - configPath: Path to subtree.yaml
     /// - Returns: true if mapping was saved, false if duplicate detected
@@ -1290,6 +1444,7 @@ public struct ExtractCommand: AsyncParsableCommand {
         patterns: [String],
         destinations: [String],
         excludePatterns: [String],
+        baseMode: String?,
         subtreeName: String,
         configPath: String
     ) async throws -> Bool {
@@ -1297,56 +1452,61 @@ public struct ExtractCommand: AsyncParsableCommand {
         // Use appropriate initializer based on single vs multiple patterns/destinations
         let mapping: ExtractionMapping
         let excludeValue = excludePatterns.isEmpty ? nil : excludePatterns
-        
+
         if patterns.count == 1 && destinations.count == 1 {
             // Single pattern, single destination
             mapping = ExtractionMapping(
                 from: patterns[0],
                 to: destinations[0],
-                exclude: excludeValue
+                exclude: excludeValue,
+                base: baseMode
             )
         } else if patterns.count == 1 {
             // Single pattern, multiple destinations
             mapping = ExtractionMapping(
                 from: patterns[0],
                 toDestinations: destinations,
-                exclude: excludeValue
+                exclude: excludeValue,
+                base: baseMode
             )
         } else if destinations.count == 1 {
             // Multiple patterns, single destination
             mapping = ExtractionMapping(
                 fromPatterns: patterns,
                 to: destinations[0],
-                exclude: excludeValue
+                exclude: excludeValue,
+                base: baseMode
             )
         } else {
             // Multiple patterns, multiple destinations
             mapping = ExtractionMapping(
                 fromPatterns: patterns,
                 toDestinations: destinations,
-                exclude: excludeValue
+                exclude: excludeValue,
+                base: baseMode
             )
         }
-        
+
         // Check for duplicate mapping
         let config = try await ConfigFileManager.loadConfig(from: configPath)
-        
+
         if let subtree = try config.findSubtree(name: subtreeName.normalized()),
            let existingMappings = subtree.extractions {
-            // Check if exact same mapping already exists
+            // Check if exact same mapping already exists (including base field)
             for existing in existingMappings {
                 if existing.from == mapping.from &&
                    existing.to == mapping.to &&
-                   existing.exclude == mapping.exclude {
+                   existing.exclude == mapping.exclude &&
+                   existing.base == mapping.base {
                     // Duplicate found - skip saving
                     return false
                 }
             }
         }
-        
+
         // T092 + T094: Save using ConfigFileManager (atomic operation)
         try await ConfigFileManager.appendExtraction(mapping, to: subtreeName, in: configPath)
-        
+
         return true
     }
     
