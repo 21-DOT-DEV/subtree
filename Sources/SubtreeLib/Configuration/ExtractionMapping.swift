@@ -21,13 +21,19 @@ public struct ExtractionMapping: Equatable, Sendable {
     
     /// Optional array of glob patterns to exclude from matches
     public let exclude: [String]?
-    
+
+    /// Optional base path mode for controlling destination path structure
+    /// - "root" (default when nil): preserves full relative path from subtree root
+    /// - "match": strips literal prefix before first glob/brace character
+    public let base: String?
+
     // MARK: - CodingKeys
-    
+
     private enum CodingKeys: String, CodingKey {
         case from
         case to
         case exclude
+        case base
     }
     
     // MARK: - Initializers
@@ -38,10 +44,11 @@ public struct ExtractionMapping: Equatable, Sendable {
     ///   - from: Single glob pattern matching source files (e.g., "docs/**/*.md")
     ///   - to: Single destination path for copied files (e.g., "project-docs/")
     ///   - exclude: Optional array of glob patterns to exclude (e.g., ["docs/internal/**"])
-    public init(from: String, to: String, exclude: [String]? = nil) {
+    public init(from: String, to: String, exclude: [String]? = nil, base: String? = nil) {
         self.from = [from]
         self.to = [to]
         self.exclude = exclude
+        self.base = base
     }
     
     /// Initialize an extraction mapping with multiple patterns and single destination
@@ -61,10 +68,11 @@ public struct ExtractionMapping: Equatable, Sendable {
     ///   - fromPatterns: Array of glob patterns matching source files (processed as union)
     ///   - to: Single destination path for copied files (relative to repository root)
     ///   - exclude: Optional array of glob patterns to exclude (applies to all patterns)
-    public init(fromPatterns: [String], to: String, exclude: [String]? = nil) {
+    public init(fromPatterns: [String], to: String, exclude: [String]? = nil, base: String? = nil) {
         self.from = fromPatterns
         self.to = [to]
         self.exclude = exclude
+        self.base = base
     }
     
     /// Initialize an extraction mapping with a single pattern and multiple destinations (012-multi-destination)
@@ -84,10 +92,11 @@ public struct ExtractionMapping: Equatable, Sendable {
     ///   - from: Single glob pattern matching source files
     ///   - toDestinations: Array of destination paths (each receives all matched files)
     ///   - exclude: Optional array of glob patterns to exclude
-    public init(from: String, toDestinations: [String], exclude: [String]? = nil) {
+    public init(from: String, toDestinations: [String], exclude: [String]? = nil, base: String? = nil) {
         self.from = [from]
         self.to = toDestinations
         self.exclude = exclude
+        self.base = base
     }
     
     /// Initialize an extraction mapping with multiple patterns and multiple destinations (012-multi-destination)
@@ -107,10 +116,11 @@ public struct ExtractionMapping: Equatable, Sendable {
     ///   - fromPatterns: Array of glob patterns (processed as union)
     ///   - toDestinations: Array of destination paths (each receives all matched files)
     ///   - exclude: Optional array of glob patterns to exclude
-    public init(fromPatterns: [String], toDestinations: [String], exclude: [String]? = nil) {
+    public init(fromPatterns: [String], toDestinations: [String], exclude: [String]? = nil, base: String? = nil) {
         self.from = fromPatterns
         self.to = toDestinations
         self.exclude = exclude
+        self.base = base
     }
 }
 
@@ -157,6 +167,20 @@ extension ExtractionMapping: Codable {
         }
         
         self.exclude = try container.decodeIfPresent([String].self, forKey: .exclude)
+
+        // Decode `base`: optional string, validate allowed values
+        if let baseValue = try container.decodeIfPresent(String.self, forKey: .base) {
+            guard baseValue == "root" || baseValue == "match" else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .base,
+                    in: container,
+                    debugDescription: "base must be 'root' or 'match', got '\(baseValue)'"
+                )
+            }
+            self.base = baseValue
+        } else {
+            self.base = nil
+        }
     }
     
     /// Custom encoder that outputs string for single value, array for multiple
@@ -178,5 +202,6 @@ extension ExtractionMapping: Codable {
         }
         
         try container.encodeIfPresent(exclude, forKey: .exclude)
+        try container.encodeIfPresent(base, forKey: .base)
     }
 }
