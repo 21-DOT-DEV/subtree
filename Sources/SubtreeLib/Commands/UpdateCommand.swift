@@ -233,12 +233,16 @@ public struct UpdateCommand: AsyncParsableCommand {
                 newTag = nil
                 newBranch = explicitRef
             }
-        } else if entry.tag != nil {
-            // Configured with a tag - auto-detect latest tag
+        } else if let currentTag = entry.tag {
+            // Configured with a tag - auto-detect latest tag in the same naming scheme
             do {
                 let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
-                guard let latestTag = remoteTags.first else {
-                    print("❌ No tags found on remote")
+                guard let latestTag = GitOperations.latestTag(
+                    from: remoteTags,
+                    matchingPrefixOf: currentTag
+                ) else {
+                    let prefix = GitOperations.nonNumericPrefix(of: currentTag)
+                    print("❌ No tags matching prefix '\(prefix)' found on remote — upstream may have changed its tag scheme; update `tag:` in subtree.yaml manually")
                     Foundation.exit(1)
                 }
                 targetRef = latestTag.tag
@@ -435,11 +439,15 @@ public struct UpdateCommand: AsyncParsableCommand {
         var newTag: String? = entry.tag
         let newBranch: String? = entry.branch
         
-        if entry.tag != nil {
-            // Configured with a tag - auto-detect latest tag
+        if let currentTag = entry.tag {
+            // Configured with a tag - auto-detect latest tag in the same naming scheme
             let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
-            guard let latestTag = remoteTags.first else {
-                throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No tags found on remote"])
+            guard let latestTag = GitOperations.latestTag(
+                from: remoteTags,
+                matchingPrefixOf: currentTag
+            ) else {
+                let prefix = GitOperations.nonNumericPrefix(of: currentTag)
+                throw NSError(domain: "UpdateError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No tags matching prefix '\(prefix)' found on remote — upstream may have changed its tag scheme; update `tag:` in subtree.yaml manually"])
             }
             targetRef = latestTag.tag
             targetCommit = latestTag.commit
@@ -569,10 +577,15 @@ public struct UpdateCommand: AsyncParsableCommand {
         
         for entry in entriesToCheck {
             do {
-                if entry.tag != nil {
-                    // TAG-BASED: Use lsRemoteTags to find latest tag
+                if let currentTag = entry.tag {
+                    // TAG-BASED: Use lsRemoteTags to find latest tag in the same naming scheme
                     let remoteTags = try await GitOperations.lsRemoteTags(remote: entry.remote)
-                    guard let latestTag = remoteTags.first else {
+                    guard let latestTag = GitOperations.latestTag(
+                        from: remoteTags,
+                        matchingPrefixOf: currentTag
+                    ) else {
+                        let prefix = GitOperations.nonNumericPrefix(of: currentTag)
+                        let errorMessage = "No tags matching prefix '\(prefix)' found on remote — upstream may have changed its tag scheme; update `tag:` in subtree.yaml manually"
                         let reportEntry = ReportEntry(
                             name: entry.name,
                             status: .error,
@@ -581,11 +594,11 @@ public struct UpdateCommand: AsyncParsableCommand {
                             currentCommit: nil,
                             branch: nil,
                             remote: entry.remote,
-                            error: "No tags found on remote"
+                            error: errorMessage
                         )
                         reportEntries.append(reportEntry)
                         if !asJSON {
-                            print("⚠️  \(entry.name): no tags found on remote")
+                            print("⚠️  \(entry.name): \(errorMessage)")
                         }
                         continue
                     }

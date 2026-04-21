@@ -335,7 +335,56 @@ public enum GitOperations {
             compareSemver(lhs.tag, rhs.tag) == .orderedDescending
         }
     }
-    
+
+    /// Extracts the leading non-numeric prefix of a tag name.
+    ///
+    /// Used to scope candidate tags to the same naming scheme as the
+    /// currently-configured tag when selecting the "latest" tag from a
+    /// heterogeneous remote. Some upstreams (e.g., openssl/openssl) mix
+    /// release tags (`openssl-3.6.2`) with historical labels (`rsaref`,
+    /// `SSLeay_0_9_0`) that would otherwise sort ahead of real releases
+    /// under pure string comparison.
+    ///
+    /// Only ASCII digits (`0`–`9`) terminate the prefix, to avoid
+    /// surprises from non-ASCII digit-like characters in tag names.
+    ///
+    /// Examples:
+    ///   - `"openssl-3.6.2"`          → `"openssl-"`
+    ///   - `"tor-0.4.8.21"`           → `"tor-"`
+    ///   - `"v1.2.3"`                 → `"v"`
+    ///   - `"1.2.3"`                  → `""`
+    ///   - `"rsaref"`                 → `"rsaref"`
+    ///   - `"OpenSSL_1_1_1w"`         → `"OpenSSL_"`
+    ///   - `"release-2.1.12-stable"`  → `"release-"`
+    static func nonNumericPrefix(of tag: String) -> String {
+        var prefix = ""
+        for ch in tag {
+            if ("0"..."9").contains(ch) { break }
+            prefix.append(ch)
+        }
+        return prefix
+    }
+
+    /// Returns the newest tag from `tags` whose non-numeric prefix matches
+    /// that of `configuredTag`, or `nil` if none match.
+    ///
+    /// `tags` is expected to be sorted latest-first (as returned by
+    /// ``lsRemoteTags(remote:)``). Matching is strict equality on the
+    /// extracted prefix (not `hasPrefix`), so a pure-numeric configured
+    /// tag (`1.2.3`, prefix `""`) will not accidentally match `rsaref`
+    /// (prefix `"rsaref"`).
+    ///
+    /// Returning `nil` on an empty filtered set is intentional: it lets
+    /// callers surface a clear error on upstream renames rather than
+    /// silently picking an unrelated tag.
+    public static func latestTag(
+        from tags: [(tag: String, commit: String)],
+        matchingPrefixOf configuredTag: String
+    ) -> (tag: String, commit: String)? {
+        let targetPrefix = nonNumericPrefix(of: configuredTag)
+        return tags.first { nonNumericPrefix(of: $0.tag) == targetPrefix }
+    }
+
     /// Compare two version strings using semver-like comparison
     /// Handles formats: "1.2.3", "v1.2.3", "1.2.3-beta", etc.
     private static func compareSemver(_ lhs: String, _ rhs: String) -> ComparisonResult {
