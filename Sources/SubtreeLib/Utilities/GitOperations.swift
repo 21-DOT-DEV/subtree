@@ -219,6 +219,81 @@ public enum GitOperations {
         }
     }
     
+    /// Find submodule gitlink (mode 160000) entries in the index under a prefix.
+    ///
+    /// Some upstream repositories include git submodule gitlinks (test/fuzz/interop
+    /// dependencies, etc). When `git subtree add/pull` merges that tree, the gitlinks
+    /// come along verbatim. Without matching `.gitmodules` entries, downstream tooling
+    /// (e.g. Swift Package Index's `git submodule update --init`) fails at clone time:
+    ///
+    ///     fatal: No url found for submodule path '<prefix>/<sub>' in .gitmodules
+    ///
+    /// This helper performs **detection only** — it does not mutate the index. Use
+    /// `stripGitlinks(prefix:)` to remove detected entries.
+    ///
+    /// - Parameter prefix: Repository-relative prefix to scan (e.g. "Vendor/openssl")
+    /// - Returns: List of gitlink paths under the prefix (empty if none)
+    /// - Throws: GitError.commandFailed on git invocation failure
+    public static func findGitlinks(prefix: String) async throws -> [String] {
+        let lsResult = try await run(arguments: ["ls-files", "-s", "--", prefix])
+        guard lsResult.exitCode == 0 else {
+            throw GitError.commandFailed("git ls-files failed: \(lsResult.stderr)")
+        }
+        
+        // ls-files -s output: "<mode> <hash> <stage>\t<path>"
+        var gitlinkPaths: [String] = []
+        for line in lsResult.stdout.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard line.hasPrefix("160000 ") else { continue }
+            guard let tabIndex = line.firstIndex(of: "\t") else { continue }
+            gitlinkPaths.append(String(line[line.index(after: tabIndex)...]))
+        }
+        
+        return gitlinkPaths
+    }
+    
+    /// Remove submodule gitlink (mode 160000) entries from the index under a prefix.
+    ///
+    /// Composes `findGitlinks(prefix:)` with `git rm --cached`. The removals are staged
+    /// so they can be folded into the same atomic commit that wraps the subtree add/update.
+    ///
+    /// - Parameter prefix: Repository-relative prefix to scan (e.g. "Vendor/openssl")
+    /// - Returns: List of removed gitlink paths (empty if none found)
+    /// - Throws: GitError.commandFailed on git invocation failure
+    @discardableResult
+    public static func stripGitlinks(prefix: String) async throws -> [String] {
+        let gitlinkPaths = try await findGitlinks(prefix: prefix)
+        guard !gitlinkPaths.isEmpty else { return [] }
+        
+        let rmResult = try await run(arguments: ["rm", "--cached", "-q", "--"] + gitlinkPaths)
+        guard rmResult.exitCode == 0 else {
+            throw GitError.commandFailed("git rm --cached failed: \(rmResult.stderr)")
+        }
+        
+        return gitlinkPaths
+    }
+    
+    /// Emit a Policy-C warning when unmapped gitlinks are present but the user has
+    /// not opted into stripping. Centralized so AddCommand and UpdateCommand stay
+    /// consistent.
+    ///
+    /// - Parameters:
+    ///   - prefix: Repository-relative prefix
+    ///   - gitlinks: Detected gitlink paths (must be non-empty)
+    ///   - command: The CLI subcommand to suggest re-running ("add" or "update")
+    public static func emitGitlinkWarning(prefix: String, gitlinks: [String], command: String) {
+        precondition(!gitlinks.isEmpty)
+        let count = gitlinks.count
+        let preview = gitlinks.prefix(3).joined(separator: ", ")
+        let suffix = count > 3 ? ", … (+\(count - 3) more)" : ""
+        print("""
+        ⚠️  Found \(count) upstream submodule gitlink(s) under \(prefix): \(preview)\(suffix)
+            Without a matching .gitmodules entry, consumers running `git submodule update`
+            (e.g. Swift Package Index) will fail to clone this repository.
+              • If unwanted: re-run `subtree \(command)` with `--strip-gitlinks` (persists to subtree.yaml).
+              • If wanted:   commit a .gitmodules file mapping each path to an upstream URL.
+        """)
+    }
+    
     // T006: Git subtree pull wrapper for update operations
     /// Execute git subtree pull to update a subtree
     ///

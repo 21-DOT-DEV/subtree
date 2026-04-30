@@ -24,6 +24,9 @@ public struct AddCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Disable squash mode (preserves full upstream history)")
     var noSquash: Bool = false
     
+    @Flag(name: .long, help: "Strip upstream submodule gitlinks after merge (persists to subtree.yaml)")
+    var stripGitlinks: Bool = false
+    
     public init() {}
     
     public func run() async throws {
@@ -147,6 +150,24 @@ public struct AddCommand: AsyncParsableCommand {
             Foundation.exit(1)
         }
         
+        // Detect upstream submodule gitlinks brought in by the merge. If the user opted
+        // in via --strip-gitlinks, remove them and fold the removal into the atomic
+        // commit. Otherwise emit a non-destructive warning (Policy C) so the user can
+        // make an informed choice.
+        do {
+            let detected = try await GitOperations.findGitlinks(prefix: finalPrefix)
+            if !detected.isEmpty {
+                if stripGitlinks {
+                    let removed = try await GitOperations.stripGitlinks(prefix: finalPrefix)
+                    print("ℹ️  Stripped \(removed.count) upstream submodule gitlink(s) from \(finalPrefix)")
+                } else {
+                    GitOperations.emitGitlinkWarning(prefix: finalPrefix, gitlinks: detected, command: "add")
+                }
+            }
+        } catch {
+            print("⚠️  Failed to inspect submodule gitlinks: \(error)")
+        }
+        
         // T040: Capture upstream commit hash from subtree trailer
         // The split trailer contains the upstream commit hash, which is what we need
         // for accurate up-to-date checks and stale trailer detection
@@ -173,7 +194,8 @@ public struct AddCommand: AsyncParsableCommand {
             commit: commitHash,
             tag: refType == "tag" ? finalRef : nil,
             branch: refType == "branch" ? finalRef : nil,
-            squash: useSquash
+            squash: useSquash,
+            stripGitlinks: stripGitlinks ? true : nil
         )
         
         // Create new config with appended entry
