@@ -148,7 +148,8 @@ public enum ConfigFileManager {
             branch: subtree.branch,
             squash: subtree.squash,
             extracts: subtree.extracts,
-            extractions: extractions
+            extractions: extractions,
+            stripGitlinks: subtree.stripGitlinks
         )
         
         // Create new subtrees array with the updated entry

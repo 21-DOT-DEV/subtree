@@ -40,6 +40,19 @@ public struct SubtreeEntry: Codable, Sendable {
     /// Defines saved file extraction configurations from subtree to project
     public let extractions: [ExtractionMapping]?
     
+    /// Optional flag to strip upstream submodule gitlinks (mode 160000) on add/update.
+    ///
+    /// Some upstream repositories include git submodule gitlinks (test/fuzz/interop
+    /// tooling, etc). When `git subtree add/pull` merges that tree, the gitlinks come
+    /// along verbatim. Without matching `.gitmodules` entries, downstream tooling
+    /// (e.g. Swift Package Index's `git submodule update --init`) fails at clone time.
+    ///
+    /// When set to `true`, the `add` and `update` commands automatically remove these
+    /// gitlinks from the index after each merge, folding the removal into the same
+    /// atomic commit. Default behavior (nil/false) is non-destructive: the CLI only
+    /// detects and warns when unmapped gitlinks are present.
+    public let stripGitlinks: Bool?
+    
     /// Initialize a subtree entry with required and optional fields
     public init(
         name: String,
@@ -50,7 +63,8 @@ public struct SubtreeEntry: Codable, Sendable {
         branch: String? = nil,
         squash: Bool? = nil,
         extracts: [ExtractPattern]? = nil,
-        extractions: [ExtractionMapping]? = nil
+        extractions: [ExtractionMapping]? = nil,
+        stripGitlinks: Bool? = nil
     ) {
         self.name = name
         self.remote = remote
@@ -61,5 +75,6 @@ public struct SubtreeEntry: Codable, Sendable {
         self.squash = squash
         self.extracts = extracts
         self.extractions = extractions
+        self.stripGitlinks = stripGitlinks
     }
 }

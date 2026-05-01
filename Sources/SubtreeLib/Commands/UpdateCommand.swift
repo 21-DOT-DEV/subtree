@@ -113,6 +113,9 @@ public struct UpdateCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Specific ref (tag, branch, or commit) to update to")
     var ref: String?
     
+    @Flag(name: .long, help: "Strip upstream submodule gitlinks after merge (persists to subtree.yaml)")
+    var stripGitlinks: Bool = false
+    
     public init() {}
     
     // T039: Mutual exclusion validation
@@ -304,6 +307,24 @@ public struct UpdateCommand: AsyncParsableCommand {
         let headAfterCommit = headAfter.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let subtreePullCreatedCommit = headBeforeCommit != headAfterCommit
         
+        // Detect upstream submodule gitlinks. Strip only if the user opted in via
+        // the CLI flag or `stripGitlinks: true` in subtree.yaml. Otherwise emit a
+        // non-destructive warning (Policy C).
+        let effectiveStrip = self.stripGitlinks || (entry.stripGitlinks ?? false)
+        do {
+            let detected = try await GitOperations.findGitlinks(prefix: entry.prefix)
+            if !detected.isEmpty {
+                if effectiveStrip {
+                    let removed = try await GitOperations.stripGitlinks(prefix: entry.prefix)
+                    print("ℹ️  Stripped \(removed.count) upstream submodule gitlink(s) from \(entry.prefix)")
+                } else {
+                    GitOperations.emitGitlinkWarning(prefix: entry.prefix, gitlinks: detected, command: "update")
+                }
+            }
+        } catch {
+            print("⚠️  Failed to inspect submodule gitlinks: \(error)")
+        }
+        
         // T021: Config update (new commit hash AND new tag if changed) after successful update
         let updatedSubtrees = config.subtrees.map { subtree in
             if subtree.name == entry.name {
@@ -316,7 +337,8 @@ public struct UpdateCommand: AsyncParsableCommand {
                     branch: newBranch,
                     squash: subtree.squash,
                     extracts: subtree.extracts,
-                    extractions: subtree.extractions
+                    extractions: subtree.extractions,
+                    stripGitlinks: self.stripGitlinks ? true : subtree.stripGitlinks
                 )
             }
             return subtree
@@ -494,6 +516,24 @@ public struct UpdateCommand: AsyncParsableCommand {
         let headAfterCommit = headAfter.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let subtreePullCreatedCommit = headBeforeCommit != headAfterCommit
         
+        // Detect upstream submodule gitlinks. Strip only if the user opted in via
+        // the CLI flag or `stripGitlinks: true` in subtree.yaml. Otherwise emit a
+        // non-destructive warning (Policy C).
+        let effectiveStripAll = self.stripGitlinks || (entry.stripGitlinks ?? false)
+        do {
+            let detected = try await GitOperations.findGitlinks(prefix: entry.prefix)
+            if !detected.isEmpty {
+                if effectiveStripAll {
+                    let removed = try await GitOperations.stripGitlinks(prefix: entry.prefix)
+                    print("ℹ️  Stripped \(removed.count) upstream submodule gitlink(s) from \(entry.prefix)")
+                } else {
+                    GitOperations.emitGitlinkWarning(prefix: entry.prefix, gitlinks: detected, command: "update")
+                }
+            }
+        } catch {
+            print("⚠️  Failed to inspect submodule gitlinks: \(error)")
+        }
+        
         // Update config (commit AND tag if changed)
         let updatedSubtrees = config.subtrees.map { subtree in
             if subtree.name == entry.name {
@@ -506,7 +546,8 @@ public struct UpdateCommand: AsyncParsableCommand {
                     branch: newBranch,
                     squash: subtree.squash,
                     extracts: subtree.extracts,
-                    extractions: subtree.extractions
+                    extractions: subtree.extractions,
+                    stripGitlinks: self.stripGitlinks ? true : subtree.stripGitlinks
                 )
             }
             return subtree
